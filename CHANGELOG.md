@@ -4,6 +4,12 @@ All notable changes to Chainlit will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Removed
+
+- **Breaking:** removed the LiteralAI data layer (`chainlit.data.literalai`, `LITERAL_API_KEY` / `LITERAL_API_URL` / `LITERAL_SERVER`). The service shut down on 2025-10-31. Migrate to the built-in data layer via `DATABASE_URL` or a custom `@cl.data_layer`.
+
 ## [2.12.0] - 2026-08-25
 
 ### Security Advisory

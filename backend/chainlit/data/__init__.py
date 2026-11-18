@@ -32,11 +32,6 @@ def get_data_layer():
             elif database_url := os.environ.get("DATABASE_URL"):
                 from .chainlit_data_layer import ChainlitDataLayer
 
-                if os.environ.get("LITERAL_API_KEY"):
-                    warnings.warn(
-                        "Both LITERAL_API_KEY and DATABASE_URL specified. Ignoring Literal AI data layer and relying on data layer pointing to DATABASE_URL."
-                    )
-
                 bucket_name = os.environ.get("BUCKET_NAME")
 
                 # AWS S3
@@ -96,15 +91,12 @@ def get_data_layer():
                 _data_layer = ChainlitDataLayer(
                     database_url=database_url, storage_client=storage_client
                 )
-            elif api_key := os.environ.get("LITERAL_API_KEY"):
-                # When LITERAL_API_KEY is defined, use Literal AI data layer
-                from .literalai import LiteralDataLayer
-
-                # support legacy LITERAL_SERVER variable as fallback
-                server = os.environ.get("LITERAL_API_URL") or os.environ.get(
-                    "LITERAL_SERVER"
+            elif os.environ.get("LITERAL_API_KEY"):
+                warnings.warn(
+                    "The LiteralAI data layer has been removed because the service was shut down. "
+                    "LITERAL_API_KEY is ignored and persistence is disabled. "
+                    "Set DATABASE_URL to use the built-in data layer, or register a custom one with @cl.data_layer."
                 )
-                _data_layer = LiteralDataLayer(api_key=api_key, server=server)
 
         _data_layer_initialized = True
 

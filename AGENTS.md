@@ -107,7 +107,7 @@ Examples:
 | **Frontend (rendering)**       | react-markdown + remark-gfm/math + rehype-katex/raw, highlight.js, lucide-react (icons), Radix UI (primitives), Plotly.js |
 | **Backend**                    | Python 3.13, FastAPI, Starlette, Uvicorn, python-socketio, Pydantic 2, PyJWT, httpx                                       |
 | **LLM integrations**           | MCP, LangChain, LlamaIndex, OpenAI SDK, Semantic Kernel, MistralAI                                                        |
-| **Infra / persistence**        | SQLAlchemy (PostgreSQL/SQLite), DynamoDB + S3 (boto3), Azure Blob / Data Lake, Google Cloud Storage, LiteralAI            |
+| **Infra / persistence**        | SQLAlchemy (PostgreSQL/SQLite), DynamoDB + S3 (boto3), Azure Blob / Data Lake, Google Cloud Storage                       |
 | **DX**                         | pre-commit hooks, linting, formatting, type checking, unit testing, E2E testing                                           |
 
 ## Architecture
@@ -138,11 +138,11 @@ The pnpm workspace includes `frontend/`, `libs/react-client/`, and `libs/copilot
 - `session.py` — `WebsocketSession` (per-connection state: user, files, MCP connections, message queue) and `HTTPSession`
 - `context.py` — `ChainlitContext` per-coroutine context variable (similar to thread-local), providing access to the current session and emitter
 - `emitter.py` — Sends events back to the frontend through the SocketIO session
-- `data/base.py` — `BaseDataLayer` ABC for persistence (threads, steps, elements, users, feedback). Implementations: `sql_alchemy.py`, `dynamodb.py`, `literalai.py`
+- `data/base.py` — `BaseDataLayer` ABC for persistence (threads, steps, elements, users, feedback). Implementations: `sql_alchemy.py`, `dynamodb.py`
 - `auth/` — JWT creation/validation (`jwt.py`), OAuth state cookies (`cookie.py`)
 - `types.py` — Shared Pydantic models for API request/response types
 
-**Data layer pattern**: The data layer is optional (no persistence by default). Register a custom implementation with `@cl.data_layer` decorator or use the built-in SQLAlchemy/DynamoDB/LiteralAI implementations. The `@queue_until_user_message()` decorator on `BaseDataLayer` methods queues write operations until the first user message arrives.
+**Data layer pattern**: The data layer is optional (no persistence by default). Register a custom implementation with `@cl.data_layer` decorator or use the built-in SQLAlchemy/DynamoDB implementations. The `@queue_until_user_message()` decorator on `BaseDataLayer` methods queues write operations until the first user message arrives.
 
 **Integrations**: `langchain/`, `llama_index/`, `openai/`, `semantic_kernel/`, `mistralai/` — each provides callback handlers that bridge those frameworks into Chainlit steps/messages.
 
