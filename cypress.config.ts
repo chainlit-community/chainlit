@@ -1,14 +1,20 @@
 import { defineConfig } from 'cypress';
 import cypressSplit from 'cypress-split';
-import fkill from 'fkill';
 
 import { runChainlit } from './cypress/support/run';
 
 export const CHAINLIT_APP_PORT = 8000;
 
 async function killChainlit() {
+  // fkill 10 is ESM-only with ESM-only transitive deps (no "require" export
+  // condition). Cypress transpiles this config to CommonJS, which would turn a
+  // plain import()/import into require() and fail, so use a native import().
+  const { default: fkill } = (await new Function('m', 'return import(m)')(
+    'fkill'
+  )) as typeof import('fkill');
   await fkill(`:${CHAINLIT_APP_PORT}`, {
     force: true,
+    waitForExit: 5000,
     silent: true
   });
 }

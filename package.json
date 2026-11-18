@@ -12,7 +12,7 @@
     "eslint": "^10",
     "eslint-plugin-chai-friendly": "^1.1.1",
     "eslint-plugin-cypress": "^6",
-    "fkill": "^9.0.0",
+    "fkill": "^10.0.3",
     "globals": "^17.4.0",
     "husky": "^9.1.6",
     "lint-staged": "^13.3.0",
