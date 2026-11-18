@@ -9,6 +9,7 @@ from chainlit.socket import (
     _get_token,
     _get_token_from_cookie,
     clean_session,
+    connect,
     connection_successful,
     load_user_env,
     persist_user_session,
@@ -628,3 +629,60 @@ class TestConnectionSuccessfulIdempotency:
             await connection_successful("sid-1")
 
         assert on_chat_start.call_count == 1
+
+
+class TestConnectSessionIdValidation:
+    """The client-supplied sessionId is used as a path component of the session files directory."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "session_id",
+        [
+            "../../etc",
+            "/tmp/x",
+            "a/b",
+            "..",
+            "",
+            None,
+            123,
+            "a" * 129,
+            # pathlib collapses "." so this would alias another session's dir.
+            "5d6c2b0e-3b9a-4e0e-9a43-1f7c8a1f2b44/.",
+        ],
+    )
+    async def test_connect_refuses_unsafe_session_id(self, session_id, monkeypatch):
+        # Open the path that would otherwise create a session, so the
+        # refusal can only come from session id validation.
+        monkeypatch.setattr("chainlit.socket.require_login", lambda: False)
+        monkeypatch.setattr(
+            "chainlit.socket.restore_existing_session", lambda *a, **kw: False
+        )
+        monkeypatch.setattr("chainlit.socket.load_user_env", lambda _: {})
+        ws_session = Mock()
+        monkeypatch.setattr("chainlit.socket.WebsocketSession", ws_session)
+        auth = {"sessionId": session_id, "clientType": "webapp"}
+
+        with pytest.raises(ConnectionRefusedError, match="invalid session id"):
+            await connect("sid", {}, auth)
+
+        ws_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_connect_refuses_missing_session_id(self, monkeypatch):
+        monkeypatch.setattr("chainlit.socket.require_login", lambda: False)
+
+        with pytest.raises(ConnectionRefusedError, match="invalid session id"):
+            await connect("sid", {}, {"clientType": "webapp"})
+
+    @pytest.mark.asyncio
+    async def test_connect_accepts_uuid_session_id(self, monkeypatch):
+        monkeypatch.setattr("chainlit.socket.require_login", lambda: False)
+        monkeypatch.setattr(
+            "chainlit.socket.restore_existing_session", lambda *a, **kw: True
+        )
+        auth = {
+            "sessionId": "5d6c2b0e-3b9a-4e0e-9a43-1f7c8a1f2b44",
+            "clientType": "webapp",
+        }
+
+        assert await connect("sid", {}, auth) is True

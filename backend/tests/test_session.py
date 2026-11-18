@@ -14,6 +14,7 @@ from chainlit.session import (
     McpSession,
     WebsocketSession,
     clean_metadata,
+    is_valid_session_id,
 )
 
 
@@ -185,6 +186,42 @@ class TestBaseSession:
         )
 
         assert session.chat_profile == "gpt-4"
+
+    @pytest.mark.parametrize(
+        "session_id",
+        ["../outside", "..", "/etc", "a/b", "a\\b", "", ".", "x" * 129, "abc\n"],
+    )
+    def test_base_session_files_dir_rejects_unsafe_id(
+        self, session_id, monkeypatch, tmp_path
+    ):
+        """A session id must not be able to escape FILES_DIRECTORY."""
+        monkeypatch.setattr("chainlit.config.FILES_DIRECTORY", tmp_path)
+        session = BaseSession(
+            id=session_id,
+            client_type="webapp",
+            thread_id=None,
+            user=None,
+            token=None,
+            user_env=None,
+        )
+
+        with pytest.raises(ValueError, match="Invalid session id"):
+            _ = session.files_dir
+
+    @pytest.mark.parametrize(
+        ("session_id", "expected"),
+        [
+            (str(uuid.uuid4()), True),
+            ("a_b-C9", True),
+            ("x" * 128, True),
+            (None, False),
+            (123, False),
+            (b"abc", False),
+        ],
+    )
+    def test_is_valid_session_id(self, session_id, expected):
+        """The allowlist accepts UUID-like ids and rejects non-strings."""
+        assert is_valid_session_id(session_id) is expected
 
     def test_base_session_files_dir(self):
         """Test BaseSession files_dir property."""
