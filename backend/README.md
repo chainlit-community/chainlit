@@ -10,52 +10,44 @@
       alt="chat on Discord"></a>
     <a href="https://twitter.com/chainlit_io" rel="nofollow"><img alt="Twitter" src="https://img.shields.io/twitter/url/https/twitter.com/chainlit_io.svg?style=social&label=Follow%20%40chainlit_io" style="max-width:100%;"></a>
     <a href="https://pypistats.org/packages/chainlit" rel="nofollow"><img alt="Downloads" src="https://img.shields.io/pypi/dm/chainlit" style="max-width:100%;"></a>
-        <a href="https://github.com/chainlit/chainlit/graphs/contributors" rel="nofollow"><img alt="Contributors" src="https://img.shields.io/github/contributors/chainlit/chainlit" style="max-width:100%;"></a>
-    <a href="https://github.com/Chainlit/chainlit/actions/workflows/ci.yaml" rel="nofollow"><img alt="CI" src="https://github.com/Chainlit/chainlit/actions/workflows/ci.yaml/badge.svg" style="max-width:100%;"></a>
+        <a href="https://github.com/chainlit-community/chainlit/graphs/contributors" rel="nofollow"><img alt="Contributors" src="https://img.shields.io/github/contributors/chainlit-community/chainlit" style="max-width:100%;"></a>
+    <a href="https://github.com/chainlit-community/chainlit/actions/workflows/ci.yaml" rel="nofollow"><img alt="CI" src="https://github.com/chainlit-community/chainlit/actions/workflows/ci.yaml/badge.svg" style="max-width:100%;"></a>
+    <a href="https://opencollective.com/chainlit" rel="nofollow"><img alt="Backers on Open Collective" src="https://opencollective.com/chainlit/backers/badge.svg" style="max-width:100%;"></a>
+    <a href="https://opencollective.com/chainlit" rel="nofollow"><img alt="Sponsors on Open Collective" src="https://opencollective.com/chainlit/sponsors/badge.svg" style="max-width:100%;"></a>
 </p>
 
-> ⚠️ **Notice:** Chainlit is now community-maintained.
+> ⚠️ **Notice:** this is the community-maintained fork of Chainlit.
 >
-> As of May 1st 2025, the original Chainlit team has stepped back from active development. The project is maintained by @Chainlit/chainlit-maintainers under a formal Maintainer Agreement.
+> The original repository, [Chainlit/chainlit](https://github.com/Chainlit/chainlit), has been archived by its owners. Maintenance continues here, in [chainlit-community/chainlit](https://github.com/chainlit-community/chainlit).
 >
-> Maintainers are responsible for code review, releases, and security.  
-> Chainlit SAS provides no warranties on future updates.
+> This fork is not affiliated with, maintained by or endorsed by Chainlit SAS, which provides no warranties on it.
 >
-> Want to help maintain? [Apply here →](https://docs.google.com/forms/d/e/1FAIpQLSf6CllNWnKBnDIoj0m-DnHU6b0dj8HYFGixKy-_qNi_rD4iNA/viewform)
+> **Scope:** we fix security issues and bugs, and we remove functionality so that it can be plugged in by others later. We do not add features.
 
 <p align="center">
-    <a href="https://chainlit.io"><b>Website</b></a>  •  
     <a href="https://docs.chainlit.io"><b>Documentation</b></a>  •  
-    <a href="https://help.chainlit.io"><b>Chainlit Help</b></a>  •  
-    <a href="https://github.com/Chainlit/cookbook"><b>Cookbook</b></a>
+    <a href="https://github.com/Chainlit/cookbook"><b>Cookbook</b></a>  •  
+    <a href="https://opencollective.com/chainlit"><b>Open Collective</b></a>
 </p>
 
-<p align="center">
-    <a href="https://trendshift.io/repositories/6708" target="_blank"><img src="https://trendshift.io/api/badge/repositories/6708" alt="Chainlit%2Fchainlit | Trendshift" style="width: 250px; height: 45px;" width="250" height="45"/></a>
-</p>
+The website, documentation, cookbook, Discord and Twitter account linked from this page are resources of the original project. They are not operated by this fork and may be out of date.
 
 https://github.com/user-attachments/assets/b3738aba-55c0-42fa-ac00-6efd1ee0d148
 
 ## Installation
 
-Open a terminal and run:
+Releases of this fork are not published to PyPI for now. They will be distributed through [GitHub Releases](https://github.com/chainlit-community/chainlit/releases). Until the first release, install this fork straight from GitHub:
 
 ```sh
-pip install chainlit
+pip install git+https://github.com/chainlit-community/chainlit.git#subdirectory=backend/
 chainlit hello
 ```
 
+(Requires Node and pnpm installed on the system.)
+
 If this opens the `hello app` in your browser, you're all set!
 
-### Development version
-
-The latest in-development version can be installed straight from GitHub with:
-
-```sh
-pip install git+https://github.com/Chainlit/chainlit.git#subdirectory=backend/
-```
-
-(Requires Node and pnpm installed on the system.)
+> **Note:** `pip install chainlit` installs the last release of the original project from PyPI. It does not contain the fixes made in this fork.
 
 ## 🚀 Quickstart
 
@@ -106,13 +98,31 @@ chainlit run demo.py -w
 
 You can find various examples of Chainlit apps [here](https://github.com/Chainlit/cookbook) that leverage tools and services such as OpenAI, Anthropiс, LangChain, LlamaIndex, ChromaDB, Pinecone and more.
 
-Tell us what you would like to see added in Chainlit using the Github issues or on [Discord](https://discord.gg/k73SQ3FyUh).
+## 🛠 Maintenance and governance
+
+The primary maintainer of this fork is Mathijs de Bruin ([@dokterbob](https://github.com/dokterbob), <mathijs@mathijsfietst.nl>), who was one of the maintainers of the original Chainlit.
+
+The fork is run and supported by enterprise users who have compliance and security needs, and by [Open Collective](https://opencollective.com/chainlit) sponsors.
+
+We are explicitly open to additional maintainers. To keep the supply chain secure, we ask that maintainers:
+
+- have a track record of quality contributions, here or on the original project;
+- can verify their identity;
+- have stable contact details (email).
+
+## 💖 Sponsoring
+
+You can support the maintenance of this fork through the [Chainlit Open Collective](https://opencollective.com/chainlit).
+
+We are open to discussing how to fairly share any income from the Open Collective amongst maintainers.
 
 ## 💁 Contributing
 
-As an open-source initiative in a rapidly evolving domain, we welcome contributions, be it through the addition of new features or the improvement of documentation.
+We welcome contributions that fit the scope of this fork: security fixes, bug fixes, removal of functionality and improvements to documentation. New features are out of scope.
 
 For detailed information on how to contribute, see [here](/CONTRIBUTING.md).
+
+To report a vulnerability, follow the [security policy](/SECURITY.md). Do not file a public issue.
 
 ## 📃 License
 

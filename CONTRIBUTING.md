@@ -39,7 +39,7 @@ I've copy/pasted the whole document there, and then formatted it with prettier.
 
 With this setup you can easily code in your fork and fetch updates from the main repository.
 
-1. Go to [https://github.com/Chainlit/chainlit/fork](https://github.com/Chainlit/chainlit/fork) to fork the chainlit code into your own repository.
+1. Go to [https://github.com/chainlit-community/chainlit/fork](https://github.com/chainlit-community/chainlit/fork) to fork the chainlit code into your own repository.
 2. Clone your fork locally
 
 ```sh
@@ -57,7 +57,7 @@ $ git remote -v
 4. Specify the new remote upstream repository that will be synced with the fork.
 
 ```sh
-git remote add upstream https://github.com/Chainlit/chainlit.git
+git remote add upstream https://github.com/chainlit-community/chainlit.git
 ```
 
 5. Verify the new upstream repository you've specified for your fork.
@@ -66,8 +66,8 @@ git remote add upstream https://github.com/Chainlit/chainlit.git
 $ git remote -v
 > origin    https://github.com/YOUR_USERNAME/YOUR_FORK.git (fetch)
 > origin    https://github.com/YOUR_USERNAME/YOUR_FORK.git (push)
-> upstream  https://github.com/Chainlit/chainlit.git (fetch)
-> upstream  https://github.com/Chainlit/chainlit.git (push)
+> upstream  https://github.com/chainlit-community/chainlit.git (fetch)
+> upstream  https://github.com/chainlit-community/chainlit.git (push)
 ```
 
 ### Install dependencies

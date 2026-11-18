@@ -66,7 +66,7 @@ dev = [
 [project.urls]
 Homepage = "https://chainlit.io/"
 Documentation = "https://docs.chainlit.io/"
-Repository = "https://github.com/Chainlit/chainlit"
+Repository = "https://github.com/chainlit-community/chainlit"
 
 [project.scripts]
 chainlit = "chainlit.cli:cli"
