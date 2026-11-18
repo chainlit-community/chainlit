@@ -18,10 +18,10 @@ module.exports = {
   // ],
 
   'backend/**/*.py': [
-    'uv run scripts/lint.py --fix',
-    'uv run scripts/format.py',
-    () => 'uv run scripts/type_check.py'
+    'uv run --no-project scripts/lint.py --fix',
+    'uv run --no-project scripts/format.py',
+    () => 'uv run --no-project scripts/type_check.py'
   ],
 
-  '.github/workflows/**': ['uv run actionlint']
+  '.github/workflows/**': ['uv run --no-project actionlint']
 };
