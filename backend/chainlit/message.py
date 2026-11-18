@@ -5,8 +5,6 @@ import uuid
 from abc import ABC
 from typing import Dict, List, Optional, Union, cast
 
-from literalai.observability.step import MessageStepType
-
 from chainlit.action import Action
 from chainlit.chat_context import chat_context
 from chainlit.config import config
@@ -14,7 +12,7 @@ from chainlit.context import context, local_steps
 from chainlit.data import get_data_layer
 from chainlit.element import CustomElement, ElementBased
 from chainlit.logger import logger
-from chainlit.step import StepDict
+from chainlit.step import MessageStepType, StepDict
 from chainlit.types import (
     AskActionResponse,
     AskActionSpec,

@@ -15,7 +15,6 @@ if env_found:
 import asyncio
 from typing import TYPE_CHECKING, Any, Dict
 
-from literalai import ChatGeneration, CompletionGeneration, GenerationMessage
 from pydantic.dataclasses import dataclass
 
 import chainlit.input_widget as input_widget
@@ -39,6 +38,7 @@ from chainlit.element import (
     Text,
     Video,
 )
+from chainlit.generation import ChatGeneration, CompletionGeneration, GenerationMessage
 from chainlit.message import (
     AskActionMessage,
     AskElementMessage,

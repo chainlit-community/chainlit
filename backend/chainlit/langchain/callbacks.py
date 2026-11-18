@@ -8,12 +8,11 @@ from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGenerationChunk, GenerationChunk
 from langchain_core.tracers.base import AsyncBaseTracer
 from langchain_core.tracers.schemas import Run
-from literalai import ChatGeneration, CompletionGeneration, GenerationMessage
-from literalai.observability.step import TrueStepType
 
 from chainlit.context import context_var
+from chainlit.generation import ChatGeneration, CompletionGeneration, GenerationMessage
 from chainlit.message import Message
-from chainlit.step import Step
+from chainlit.step import Step, TrueStepType
 from chainlit.utils import utc_now
 
 DEFAULT_ANSWER_PREFIX_TOKENS = ["Final", "Answer", ":"]

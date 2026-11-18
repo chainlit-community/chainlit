@@ -1,7 +1,5 @@
 import asyncio
-from typing import Union
-
-from literalai import ChatGeneration, CompletionGeneration
+from typing import Any
 
 from chainlit.context import local_steps
 from chainlit.step import Step
@@ -16,9 +14,7 @@ def instrument_openai():
 
     from literalai.instrumentation.openai import instrument_openai
 
-    def on_new_generation(
-        generation: Union["ChatGeneration", "CompletionGeneration"], timing
-    ):
+    def on_new_generation(generation: Any, timing):
         previous_steps = local_steps.get()
 
         parent_id = previous_steps[-1].id if previous_steps else None
@@ -41,7 +37,10 @@ def instrument_openai():
             else None
         )
 
-        if isinstance(generation, ChatGeneration):
+        # Duck-typed: literalai.instrumentation still returns literalai's own
+        # generation classes, so isinstance() against chainlit's would be False.
+        # Vendoring the instrumentation restores an isinstance() check.
+        if hasattr(generation, "messages"):
             step.input = generation.messages  # type: ignore
             step.output = generation.message_completion  # type: ignore
         else:

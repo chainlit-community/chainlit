@@ -5,18 +5,24 @@ import time
 import uuid
 from copy import deepcopy
 from functools import wraps
-from typing import Callable, Dict, List, Optional, TypedDict, Union
-
-from literalai import BaseGeneration
-from literalai.observability.step import StepType, TrueStepType
+from typing import Callable, Dict, List, Literal, Optional, TypedDict, Union
 
 from chainlit.config import config
 from chainlit.context import CL_RUN_NAMES, context, local_steps
 from chainlit.data import get_data_layer
 from chainlit.element import Element
+from chainlit.generation import BaseGeneration
 from chainlit.logger import logger
 from chainlit.types import FeedbackDict
 from chainlit.utils import utc_now
+
+TrueStepType = Literal[
+    "run", "tool", "llm", "embedding", "retrieval", "rerank", "undefined"
+]
+
+MessageStepType = Literal["user_message", "assistant_message", "system_message"]
+
+StepType = Union[TrueStepType, MessageStepType]
 
 
 def check_add_step_in_cot(step: "Step"):
