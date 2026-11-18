@@ -13,6 +13,14 @@ We accept:
 
 If you are unsure whether a change is in scope, open an issue before writing code.
 
+## Test coverage
+
+Pull requests must come with tests:
+
+- **Backend changes** need unit test coverage.
+- **Frontend changes** need E2E (Cypress) test coverage.
+- **Bug fixes** need a regression test that fails without the fix.
+
 ## Setting up
 
 To contribute to Chainlit, you first need to set up the project on your local machine.
@@ -26,6 +34,7 @@ I've copy/pasted the whole document there, and then formatted it with prettier.
 
 - [Contribute to Chainlit](#contribute-to-chainlit)
   - [What we accept](#what-we-accept)
+  - [Test coverage](#test-coverage)
   - [Setting up](#setting-up)
   - [Table of Contents](#table-of-contents)
   - [Local setup](#local-setup)

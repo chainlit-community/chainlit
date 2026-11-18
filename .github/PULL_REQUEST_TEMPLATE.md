@@ -17,10 +17,21 @@ The fix is then developed in a private fork. See SECURITY.md.
 
 ## What changed and why
 
+## Tests
+
+<!--
+Test coverage is required:
+- backend changes need unit tests;
+- frontend changes need E2E (Cypress) tests;
+- bug fixes need a regression test that fails without the fix.
+-->
+
 ## How was it verified
 
 ## Checklist
 
 - [ ] This does not add a new feature.
 - [ ] This is not a fix for an undisclosed security vulnerability.
+- [ ] Backend changes are covered by unit tests, and frontend changes by E2E tests.
+- [ ] A bug fix comes with a regression test.
 - [ ] The change is backward compatible, or it is a feature reduction that says who is affected and how to migrate.
