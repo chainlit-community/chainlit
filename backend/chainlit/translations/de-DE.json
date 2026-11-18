@@ -106,7 +106,8 @@
         "copy": {
           "button": "In Zwischenablage kopieren",
           "success": "Kopiert!"
-        }
+        },
+        "debug": "Debuggen"
       },
       "feedback": {
         "positive": "Hilfreich",

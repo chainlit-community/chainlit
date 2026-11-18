@@ -106,7 +106,8 @@
         "copy": {
           "button": "Copy to clipboard",
           "success": "Copied!"
-        }
+        },
+        "debug": "Debug"
       },
       "feedback": {
         "positive": "Helpful",

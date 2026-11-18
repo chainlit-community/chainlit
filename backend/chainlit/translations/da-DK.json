@@ -105,7 +105,8 @@
         "copy": {
           "button": "Kopier til udklipsholder",
           "success": "Kopieret!"
-        }
+        },
+        "debug": "Fejlsøg"
       },
       "feedback": {
         "positive": "Hjælpsom",

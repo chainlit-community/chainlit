@@ -106,7 +106,8 @@
         "copy": {
           "button": "复制到剪贴板",
           "success": "已复制！"
-        }
+        },
+        "debug": "调试"
       },
       "feedback": {
         "positive": "有帮助",

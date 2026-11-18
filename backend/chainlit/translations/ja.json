@@ -105,7 +105,8 @@
         "copy": {
           "button": "クリップボードにコピー",
           "success": "コピーしました！"
-        }
+        },
+        "debug": "デバッグ"
       },
       "feedback": {
         "positive": "役に立った",
