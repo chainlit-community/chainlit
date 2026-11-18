@@ -29,6 +29,9 @@ def remove_literalai_args(kargs: Dict[str, Any]) -> Dict[str, Any]:
     Kept for backward compatibility: code written for the LiteralAI
     instrumentation may pass `literalai_tags=` / `literalai_metadata=` to the SDK
     call, which the SDK itself would reject.
+
+    This compatibility shim might be removed in a future release; new code
+    should not pass `literalai_*` arguments.
     """
     largs = {}
     for key in list(kargs.keys()):
