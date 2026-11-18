@@ -30,7 +30,7 @@
     <a href="https://opencollective.com/chainlit"><b>Open Collective</b></a>
 </p>
 
-The website, documentation, cookbook, Discord and Twitter account linked from this page are resources of the original project. They are not operated by this fork and may be out of date.
+The documentation and cookbook linked above are those of the original Chainlit. They are not maintained by this fork and may be outdated. We intend to bring the documentation into this repository, so that it is always updated in sync with the code. The Discord and Twitter account linked from this page also belong to the original project.
 
 https://github.com/user-attachments/assets/b3738aba-55c0-42fa-ac00-6efd1ee0d148
 
@@ -47,7 +47,7 @@ chainlit hello
 
 If this opens the `hello app` in your browser, you're all set!
 
-> **Note:** `pip install chainlit` installs the last release of the original project from PyPI. It does not contain the fixes made in this fork.
+> ⚠️ **Warning:** `pip install chainlit` installs the last release of the original project from PyPI. That package is unmaintained and does not receive the security fixes made in this fork. For security reasons, we strongly recommend that you do not install it.
 
 ## 🚀 Quickstart
 
@@ -118,11 +118,11 @@ We are open to discussing how to fairly share any income from the Open Collectiv
 
 ## 💁 Contributing
 
-We welcome contributions that fit the scope of this fork: security fixes, bug fixes, removal of functionality and improvements to documentation. New features are out of scope.
+We currently do not accept contributions that add new features. We welcome bug fixes (including CI, reliability, package management and tooling improvements and simplifications) and feature reductions, such as removing legacy functionality.
 
-For detailed information on how to contribute, see [here](/CONTRIBUTING.md).
+For what we accept and how to contribute, see [here](/CONTRIBUTING.md).
 
-To report a vulnerability, follow the [security policy](/SECURITY.md). Do not file a public issue.
+Security fixes are handled privately: report vulnerabilities through the [security policy](/SECURITY.md), never in a public issue or pull request.
 
 ## 📃 License
 

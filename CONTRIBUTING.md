@@ -1,5 +1,20 @@
 # Contribute to Chainlit
 
+## What we accept
+
+This is a maintenance fork. We currently do **not** accept contributions that add new features, and we do not take feature requests.
+
+We accept:
+
+- **Bug fixes.** This includes improvements and simplifications to CI, reliability, package management and tooling.
+- **Feature reductions.** For example, removing legacy functionality.
+- **Security fixes**, but never as a public pull request or issue. Report the vulnerability privately as described in the [security policy](/SECURITY.md). The fix is then developed in a private fork.
+- **Documentation** for the above.
+
+If you are unsure whether a change is in scope, open an issue before writing code.
+
+## Setting up
+
 To contribute to Chainlit, you first need to set up the project on your local machine.
 
 ## Table of Contents
@@ -10,6 +25,8 @@ I've copy/pasted the whole document there, and then formatted it with prettier.
 -->
 
 - [Contribute to Chainlit](#contribute-to-chainlit)
+  - [What we accept](#what-we-accept)
+  - [Setting up](#setting-up)
   - [Table of Contents](#table-of-contents)
   - [Local setup](#local-setup)
     - [Requirements](#requirements)
