@@ -47,3 +47,28 @@ def test_get_data_layer_no_env_returns_none_without_warning(
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         assert get_data_layer() is None
+
+
+def test_get_data_layer_literal_api_key_warns_only_once(
+    monkeypatch: pytest.MonkeyPatch, fresh_data_layer_state
+):
+    monkeypatch.setenv("LITERAL_API_KEY", "lit-key")
+
+    with pytest.warns(UserWarning, match="LiteralAI data layer has been removed"):
+        assert get_data_layer() is None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert get_data_layer() is None
+
+
+def test_get_data_layer_custom_layer_wins_over_literal_api_key(
+    monkeypatch: pytest.MonkeyPatch, fresh_data_layer_state, test_config
+):
+    monkeypatch.setenv("LITERAL_API_KEY", "lit-key")
+    custom_data_layer = Mock()
+    monkeypatch.setattr(test_config.code, "data_layer", lambda: custom_data_layer)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert get_data_layer() is custom_data_layer
