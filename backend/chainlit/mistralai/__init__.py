@@ -1,15 +1,18 @@
 import asyncio
-from typing import Any
+from typing import Union
 
 from chainlit.context import get_context
+from chainlit.generation import ChatGeneration, CompletionGeneration
 from chainlit.step import Step
 from chainlit.utils import timestamp_utc
 
 
 def instrument_mistralai():
-    from literalai.instrumentation.mistralai import instrument_mistralai
+    from chainlit._instrumentation.mistralai import instrument_mistralai
 
-    def on_new_generation(generation: Any, timing):
+    def on_new_generation(
+        generation: Union[ChatGeneration, CompletionGeneration], timing
+    ):
         context = get_context()
 
         parent_id = None
@@ -34,10 +37,7 @@ def instrument_mistralai():
             else None
         )
 
-        # Duck-typed: literalai.instrumentation still returns literalai's own
-        # generation classes, so isinstance() against chainlit's would be False.
-        # Vendoring the instrumentation restores an isinstance() check.
-        if hasattr(generation, "messages"):
+        if isinstance(generation, ChatGeneration):
             step.input = generation.messages  # type: ignore
             step.output = generation.message_completion  # type: ignore
         else:
@@ -46,4 +46,4 @@ def instrument_mistralai():
 
         asyncio.create_task(step.send())
 
-    instrument_mistralai(None, on_new_generation)
+    instrument_mistralai(on_new_generation)

@@ -213,8 +213,8 @@ class GenerationHelper:
             content="",
         )
 
-        if literal_uuid := message.additional_kwargs.get("uuid"):
-            msg["uuid"] = literal_uuid
+        if message_uuid := message.additional_kwargs.get("uuid"):
+            msg["uuid"] = message_uuid
             msg["templated"] = True
 
         if name := getattr(message, "name", None):

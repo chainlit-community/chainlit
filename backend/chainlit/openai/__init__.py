@@ -1,7 +1,8 @@
 import asyncio
-from typing import Any
+from typing import Union
 
 from chainlit.context import local_steps
+from chainlit.generation import ChatGeneration, CompletionGeneration
 from chainlit.step import Step
 from chainlit.utils import check_module_version, timestamp_utc
 
@@ -12,9 +13,11 @@ def instrument_openai():
             "Expected OpenAI version >= 1.0.0. Run `pip install openai --upgrade`"
         )
 
-    from literalai.instrumentation.openai import instrument_openai
+    from chainlit._instrumentation.openai import instrument_openai
 
-    def on_new_generation(generation: Any, timing):
+    def on_new_generation(
+        generation: Union[ChatGeneration, CompletionGeneration], timing
+    ):
         previous_steps = local_steps.get()
 
         parent_id = previous_steps[-1].id if previous_steps else None
@@ -37,10 +40,7 @@ def instrument_openai():
             else None
         )
 
-        # Duck-typed: literalai.instrumentation still returns literalai's own
-        # generation classes, so isinstance() against chainlit's would be False.
-        # Vendoring the instrumentation restores an isinstance() check.
-        if hasattr(generation, "messages"):
+        if isinstance(generation, ChatGeneration):
             step.input = generation.messages  # type: ignore
             step.output = generation.message_completion  # type: ignore
         else:
@@ -49,4 +49,4 @@ def instrument_openai():
 
         asyncio.create_task(step.send())
 
-    instrument_openai(None, on_new_generation)
+    instrument_openai(on_new_generation)

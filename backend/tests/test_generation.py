@@ -1,4 +1,3 @@
-import dataclasses
 import json
 
 import pytest
@@ -193,45 +192,3 @@ def test_public_api_is_local_classes():
     assert chainlit.CompletionGeneration is CompletionGeneration
     assert chainlit.ChatGeneration.__module__ == "chainlit.generation"
     assert "GenerationMessage" in chainlit.__all__
-
-
-# TEMPORARY: parity with the literalai package. Remove together with the
-# `literalai` dependency.
-@pytest.mark.parametrize("name", ["ChatGeneration", "CompletionGeneration"])
-def test_temporary_literalai_field_parity(name):
-    literalai = pytest.importorskip("literalai")
-    ours = getattr(chainlit.generation, name)
-    theirs = getattr(literalai, name)
-
-    def describe(cls):
-        # pydantic wraps Field() defaults, so compare the instantiated defaults
-        instance = cls()
-        return [(f.name, getattr(instance, f.name)) for f in dataclasses.fields(cls)]
-
-    assert describe(ours) == describe(theirs)
-    assert ours.type.value == theirs.type.value
-
-
-def test_temporary_literalai_output_parity():
-    literalai = pytest.importorskip("literalai")
-    kwargs = _populated_kwargs()
-    pairs = [
-        (
-            _chat(),
-            literalai.ChatGeneration(
-                **kwargs,
-                messages=[{"role": "user", "content": "hi"}],
-                message_completion={"role": "assistant", "content": "hello"},
-            ),
-        ),
-        (
-            _completion(),
-            literalai.CompletionGeneration(**kwargs, prompt="Say hi", completion="hi"),
-        ),
-        (ChatGeneration(), literalai.ChatGeneration()),
-        (CompletionGeneration(), literalai.CompletionGeneration()),
-    ]
-    for ours, theirs in pairs:
-        assert ours.to_dict() == theirs.to_dict()
-        assert str(ours) == str(theirs)
-        assert repr(ours) == repr(theirs)
