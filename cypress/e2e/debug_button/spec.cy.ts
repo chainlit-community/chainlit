@@ -22,6 +22,14 @@ describe('Debug button', () => {
       .and('not.contain', '[thread_id]')
       .and('not.contain', '[step_id]');
 
+    // Open the Radix tooltip by focusing its trigger and check the label
+    cy.get('@aiMessage')
+      .find('a[href^="https://debug.example.com/threads/"]')
+      .focus();
+    // Radix also renders a visually-hidden role=tooltip copy; target the
+    // visible content element (it carries data-side)
+    cy.contains('[data-side]', 'Debug').should('be.visible');
+
     cy.get('body').should('not.contain.text', 'Literal AI');
   });
 });
