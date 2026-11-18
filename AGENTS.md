@@ -32,11 +32,11 @@ Chainlit is a Python framework for building production-ready conversational AI a
 
 ### Build
 
-|                   | Command                                      | Directory  | What it does                                                                              |
-| ----------------- | -------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
-| All JS packages   | `pnpm build`                                 | repo root  | Build all workspace packages (frontend, react-client, copilot) via `pnpm run --recursive` |
-| Backend (PyPI)    | `uv build`                                   | `backend/` | Build Python package — builds JS assets first, then bundles into the Python distribution  |
-| Single JS package | `pnpm --filter @chainlit/react-client build` | repo root  | Build one package (useful for publishing)                                                 |
+|                           | Command                                      | Directory  | What it does                                                                              |
+| ------------------------- | -------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
+| All JS packages           | `pnpm build`                                 | repo root  | Build all workspace packages (frontend, react-client, copilot) via `pnpm run --recursive` |
+| Backend (GitHub Releases) | `uv build`                                   | `backend/` | Build Python package — builds JS assets first, then bundles into the Python distribution  |
+| Single JS package         | `pnpm --filter @chainlit/react-client build` | repo root  | Build one package (useful for publishing)                                                 |
 
 ### Dev servers
 
@@ -115,10 +115,10 @@ Examples:
 ### Monorepo structure
 
 ```
-backend/          # Python package (published to PyPI as "chainlit")
+backend/          # Python package (distributed as a wheel via GitHub Releases, not PyPI, for this fork)
 frontend/         # React app (built output served by backend)
 libs/
-  react-client/   # @chainlit/react-client — published npm package with React hooks
+  react-client/   # @chainlit/react-client — distributed as a tarball via GitHub Releases for this fork, not published to npm
   copilot/        # Copilot widget (embedded chat bubble)
 cypress/          # E2E tests
 ```
