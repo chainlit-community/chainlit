@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - The generation and step types (`cl.ChatGeneration`, `cl.CompletionGeneration`, `cl.GenerationMessage`, ...) and the OpenAI / Mistral AI instrumentation behind `cl.instrument_openai()` / `cl.instrument_mistralai()` now live in Chainlit itself. The `literalai` package is no longer a dependency, and neither are its transitive dependencies (`traceloop-sdk`, `chevron`, the `opentelemetry-instrumentation-*` and OTLP exporter packages, `anthropic`, `grpcio`, `cuid`, `inflection`, `docstring-parser`). Apps that `import literalai` (or any of those packages) themselves must add it to their own dependencies.
+- `cl.ChatGeneration` / `cl.CompletionGeneration` are now Chainlit's own classes rather than aliases of the `literalai` ones, so `isinstance()` checks no longer match `literalai` generation objects. Their fields and serialised form are unchanged.
+- `cl.instrument_mistralai()` now raises `ModuleNotFoundError` instead of a generic `Exception` when `mistralai` is not installed.
 
 ### Fixed
 
