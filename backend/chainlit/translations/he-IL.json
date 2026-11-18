@@ -106,7 +106,8 @@
         "copy": {
           "button": "העתק ללוח",
           "success": "הועתק!"
-        }
+        },
+        "debug": "ניפוי שגיאות"
       },
       "feedback": {
         "positive": "מועיל",

@@ -106,7 +106,8 @@
         "copy": {
           "button": "클립보드로 복사",
           "success": "복사되었습니다!"
-        }
+        },
+        "debug": "디버그"
       },
       "feedback": {
         "positive": "도움이 되었음",

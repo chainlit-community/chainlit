@@ -106,7 +106,8 @@
         "copy": {
           "button": "Copiar para a área de transferência",
           "success": "Copiado!"
-        }
+        },
+        "debug": "Depurar"
       },
       "feedback": {
         "positive": "Útil",
