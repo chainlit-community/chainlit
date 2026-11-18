@@ -1,5 +1,28 @@
 # Contribute to Chainlit
 
+## What we accept
+
+This is a maintenance fork. We currently do **not** accept contributions that add new features, and we do not take feature requests.
+
+We accept:
+
+- **Bug fixes.** This includes improvements and simplifications to CI, reliability, package management and tooling.
+- **Feature reductions.** For example, removing legacy functionality.
+- **Security fixes**, but never as a public pull request or issue. Report the vulnerability privately as described in the [security policy](/SECURITY.md). The fix is then developed in a private fork.
+- **Documentation** for the above.
+
+If you are unsure whether a change is in scope, open an issue before writing code.
+
+## Test coverage
+
+Pull requests must come with tests:
+
+- **Backend changes** need unit test coverage.
+- **Frontend changes** need E2E (Cypress) test coverage.
+- **Bug fixes** need a regression test that fails without the fix.
+
+## Setting up
+
 To contribute to Chainlit, you first need to set up the project on your local machine.
 
 ## Table of Contents
@@ -10,6 +33,9 @@ I've copy/pasted the whole document there, and then formatted it with prettier.
 -->
 
 - [Contribute to Chainlit](#contribute-to-chainlit)
+  - [What we accept](#what-we-accept)
+  - [Test coverage](#test-coverage)
+  - [Setting up](#setting-up)
   - [Table of Contents](#table-of-contents)
   - [Local setup](#local-setup)
     - [Requirements](#requirements)
@@ -39,7 +65,7 @@ I've copy/pasted the whole document there, and then formatted it with prettier.
 
 With this setup you can easily code in your fork and fetch updates from the main repository.
 
-1. Go to [https://github.com/Chainlit/chainlit/fork](https://github.com/Chainlit/chainlit/fork) to fork the chainlit code into your own repository.
+1. Go to [https://github.com/chainlit-community/chainlit/fork](https://github.com/chainlit-community/chainlit/fork) to fork the chainlit code into your own repository.
 2. Clone your fork locally
 
 ```sh
@@ -57,7 +83,7 @@ $ git remote -v
 4. Specify the new remote upstream repository that will be synced with the fork.
 
 ```sh
-git remote add upstream https://github.com/Chainlit/chainlit.git
+git remote add upstream https://github.com/chainlit-community/chainlit.git
 ```
 
 5. Verify the new upstream repository you've specified for your fork.
@@ -66,8 +92,8 @@ git remote add upstream https://github.com/Chainlit/chainlit.git
 $ git remote -v
 > origin    https://github.com/YOUR_USERNAME/YOUR_FORK.git (fetch)
 > origin    https://github.com/YOUR_USERNAME/YOUR_FORK.git (push)
-> upstream  https://github.com/Chainlit/chainlit.git (fetch)
-> upstream  https://github.com/Chainlit/chainlit.git (push)
+> upstream  https://github.com/chainlit-community/chainlit.git (fetch)
+> upstream  https://github.com/chainlit-community/chainlit.git (push)
 ```
 
 ### Install dependencies

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/chainlit-community/chainlit/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue. See SECURITY.md.
+  - name: Feature request
+    url: https://github.com/chainlit-community/chainlit/blob/main/CONTRIBUTING.md#what-we-accept
+    about: This fork does not accept new features or feature requests. See what we accept instead.

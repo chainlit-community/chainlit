@@ -7,7 +7,12 @@ On the repository page, go to **Security > Advisories** and click
 **"Report a vulnerability"**. This opens a private channel visible only to maintainers,
 keeping details out of public view until a fix is ready.
 
-Do not file a public issue for security matters.
+Do not file a public issue or open a public pull request for security matters.
+Fixes are developed together with the reporter in a temporary private fork attached to
+the advisory, and are only made public when the advisory is published.
+
+You can open a report directly at
+<https://github.com/chainlit-community/chainlit/security/advisories/new>.
 
 When writing your report it helps to include: a description of the vulnerability, the version
 (or commit) you tested against, steps to reproduce or a proof-of-concept, and your assessment
