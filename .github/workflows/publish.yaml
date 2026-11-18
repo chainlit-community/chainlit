@@ -44,7 +44,7 @@ jobs:
       contents: read
       id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/pnpm-node-install
         name: Install Node, pnpm and dependencies.
       - uses: ./.github/actions/uv-python-install
@@ -65,7 +65,7 @@ jobs:
 
       - name: Publish package distributions to TestPyPI
         if: inputs.use_testpypi
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist
           repository-url: https://test.pypi.org/legacy/
@@ -74,7 +74,7 @@ jobs:
 
       - name: Publish package distributions to PyPI
         if: ${{ !inputs.use_testpypi }}
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist
           password: ${{ secrets.PYPI_API_TOKEN }}
