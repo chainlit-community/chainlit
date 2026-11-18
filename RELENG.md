@@ -56,7 +56,7 @@ pip install https://github.com/chainlit-community/chainlit/releases/download/<ve
 chainlit --version
 
 # asset integrity
-sha256sum -c SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
 
 # build provenance
 gh attestation verify chainlit-<version>-py3-none-any.whl -R chainlit-community/chainlit

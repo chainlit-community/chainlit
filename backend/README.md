@@ -66,7 +66,7 @@ If this opens the `hello app` in your browser, you're all set!
 To verify a downloaded release asset, check it against the release's `SHA256SUMS` file and its build provenance attestation:
 
 ```sh
-sha256sum -c SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
 gh attestation verify chainlit-<version>-py3-none-any.whl -R chainlit-community/chainlit
 ```
 
