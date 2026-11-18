@@ -105,7 +105,8 @@
         "copy": {
           "button": "نسخ إلى الحافظة",
           "success": "تم النسخ!"
-        }
+        },
+        "debug": "تصحيح"
       },
       "feedback": {
         "positive": "مفيد",

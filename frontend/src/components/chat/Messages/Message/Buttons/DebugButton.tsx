@@ -2,6 +2,7 @@ import { BugIcon } from 'lucide-react';
 
 import { IStep } from '@chainlit/react-client';
 
+import Translator from '@/components/i18n/Translator';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip,
@@ -36,7 +37,9 @@ const DebugButton = ({ step, debugUrl }: DebugButtonProps) => {
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <p>Debug in Literal AI</p>
+          <p>
+            <Translator path="chat.messages.actions.debug" />
+          </p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

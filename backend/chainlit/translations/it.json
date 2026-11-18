@@ -106,7 +106,8 @@
         "copy": {
           "button": "Copia negli appunti",
           "success": "Copiato!"
-        }
+        },
+        "debug": "Debug"
       },
       "feedback": {
         "positive": "Utile",
