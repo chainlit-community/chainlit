@@ -35,6 +35,8 @@ jobs:
     needs: prepare
     runs-on: ${{ matrix.os }}
     strategy:
+      # Let every OS and shard report; one failure should not hide the others.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         containers: ${{ fromJSON(needs.prepare.outputs.indexes) }}
@@ -54,6 +56,9 @@ jobs:
         name: Install Node, pnpm and dependencies.
       - name: Ensure Cypress binary is installed
         run: pnpm exec cypress install
+        shell: bash
+      - name: Verify Cypress binary
+        run: pnpm exec cypress verify
         shell: bash
       - uses: ./.github/actions/uv-python-install
         name: Install Python, uv and Python & pnpm (uv does it automatically) dependencies
