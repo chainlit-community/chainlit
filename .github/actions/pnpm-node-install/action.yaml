@@ -3,9 +3,9 @@ description: Install Node, pnpm and dependencies using cache.
 
 inputs:
   node-version:
-    description: Node.js version
-    required: true
-    default: '24'
+    description: Node.js version; defaults to .nvmrc
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -18,6 +18,7 @@ runs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version == '' && '.nvmrc' || '' }}
         registry-url: 'https://registry.npmjs.org'
         cache: 'pnpm'
         cache-dependency-path: '**/pnpm-lock.yaml'
