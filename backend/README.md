@@ -5,15 +5,12 @@
 
 </p>
 <p align="center">
-   <a href="https://discord.gg/k73SQ3FyUh" target="_blank">
-   <img src="https://img.shields.io/discord/1088038867602526210?logo=discord&labelColor=%20%235462eb&logoColor=%20%23f5f5f5&color=%20%235462eb"
-      alt="chat on Discord"></a>
-    <a href="https://twitter.com/chainlit_io" rel="nofollow"><img alt="Twitter" src="https://img.shields.io/twitter/url/https/twitter.com/chainlit_io.svg?style=social&label=Follow%20%40chainlit_io" style="max-width:100%;"></a>
-    <a href="https://pypistats.org/packages/chainlit" rel="nofollow"><img alt="Downloads" src="https://img.shields.io/pypi/dm/chainlit" style="max-width:100%;"></a>
-        <a href="https://github.com/chainlit-community/chainlit/graphs/contributors" rel="nofollow"><img alt="Contributors" src="https://img.shields.io/github/contributors/chainlit-community/chainlit" style="max-width:100%;"></a>
+    <a href="https://github.com/chainlit-community/chainlit/graphs/contributors" rel="nofollow"><img alt="Contributors" src="https://img.shields.io/github/contributors/chainlit-community/chainlit" style="max-width:100%;"></a>
     <a href="https://github.com/chainlit-community/chainlit/actions/workflows/ci.yaml" rel="nofollow"><img alt="CI" src="https://github.com/chainlit-community/chainlit/actions/workflows/ci.yaml/badge.svg" style="max-width:100%;"></a>
     <a href="https://opencollective.com/chainlit" rel="nofollow"><img alt="Backers on Open Collective" src="https://opencollective.com/chainlit/backers/badge.svg" style="max-width:100%;"></a>
+    <!-- Re-enable once we have actual sponsors
     <a href="https://opencollective.com/chainlit" rel="nofollow"><img alt="Sponsors on Open Collective" src="https://opencollective.com/chainlit/sponsors/badge.svg" style="max-width:100%;"></a>
+    -->
 </p>
 
 > ⚠️ **Notice:** this is the community-maintained fork of Chainlit.
