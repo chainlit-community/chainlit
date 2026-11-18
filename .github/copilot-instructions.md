@@ -126,7 +126,7 @@ uv run scripts/format.py --check
 
 ### Working with the Backend
 
-- **Technology**: Python 3.10+ with uv, FastAPI, SocketIO
+- **Technology**: Python 3.11+ with uv, FastAPI, SocketIO
 - **Entry point**: `backend/chainlit/`
 - **Tests**: `backend/tests/`
 - **Dependencies**: Defined in `backend/pyproject.toml`
@@ -188,7 +188,7 @@ uv run chainlit run app.py -w
 
 ## Requirements
 
-- **Python**: >= 3.10
+- **Python**: >= 3.11
 - **Node.js**: >= 20 (24+ recommended)
 - **uv**: 2.1.3 (install via pipx)
 - **pnpm**: Latest (install via npm)

@@ -1755,10 +1755,10 @@ async def connect_mcp(
     )
     try:
         await asyncio.wait_for(ready_event.wait(), timeout=connect_timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
     if "error" not in result_holder and "client" not in result_holder:
-        result_holder["error"] = asyncio.TimeoutError(
+        result_holder["error"] = TimeoutError(
             f"Timed out after {connect_timeout:.0f}s waiting for the MCP "
             "connection to initialize."
         )
