@@ -283,10 +283,7 @@ const useChatSession = () => {
         // matching the behavior of the 'element' socket event handler.
         elements.forEach((element) => {
           if (!element.url && element.chainlitKey) {
-            element.url = client.getElementUrl(
-              element.chainlitKey,
-              sessionId
-            );
+            element.url = client.getElementUrl(element.chainlitKey, sessionId);
           }
         });
         setTasklists(
