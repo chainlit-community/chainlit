@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -192,6 +193,39 @@ class TestDynamoThreadElementUrlFailure:
         assert thread["id"] == "thread-1"
         assert len(thread["elements"]) == 1
         assert thread["elements"][0]["id"] == "elem-1"
+
+
+@pytest.mark.asyncio
+async def test_chainlit_get_thread_tolerates_storage_read_url_error():
+    layer = ChainlitDataLayer(
+        database_url="postgresql://fake", storage_client=_FailingStorageProvider()
+    )
+    thread_row = {
+        "id": "thread-1",
+        "createdAt": datetime(2026, 1, 1),
+        "name": "name",
+        "userId": None,
+        "user_identifier": None,
+        "metadata": "{}",
+    }
+    element_row = TestConvertElementRowToDict()._make_row(
+        objectKey="threads/thread-1/files/elem-1"
+    )
+
+    async def mock_execute_query(query, params):
+        if 'FROM "Thread"' in query:
+            return [thread_row]
+        if 'FROM "Element"' in query:
+            return [element_row]
+        return []
+
+    layer.execute_query = AsyncMock(side_effect=mock_execute_query)
+
+    thread = await layer.get_thread("thread-1")
+
+    assert thread is not None
+    assert [e["id"] for e in thread["elements"]] == ["elem-1"]
+    assert thread["elements"][0]["url"] is None
 
 
 @pytest.mark.asyncio
