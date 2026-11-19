@@ -631,6 +631,86 @@ class TestConnectionSuccessfulIdempotency:
         assert on_chat_start.call_count == 1
 
 
+class TestConnectionSuccessfulResumeErrors:
+    """A broken thread must not abort the resume without telling the client."""
+
+    async def _connect(
+        self, mock_session_factory, resume_thread, message_cls=None, emit_error=None
+    ):
+        session = mock_session_factory()
+        session.restored = False
+        session.chat_started = False
+        session.thread_id_to_resume = "thread-1"
+
+        mock_context = Mock()
+        mock_context.session = session
+        mock_context.emitter = AsyncMock()
+        mock_context.emitter.resume_thread.side_effect = emit_error
+
+        mock_config = Mock()
+        mock_config.code.on_chat_start = None
+        mock_config.code.on_chat_resume = AsyncMock()
+
+        chat_context = Mock()
+
+        with (
+            patch("chainlit.socket.init_ws_context", return_value=mock_context),
+            patch("chainlit.socket.config", mock_config),
+            patch("chainlit.socket.chat_context", chat_context),
+            patch("chainlit.socket.resume_thread", resume_thread),
+            patch("chainlit.socket.Message", message_cls or Mock()),
+        ):
+            await connection_successful("sid-1")
+
+        return mock_context.emitter, mock_config.code.on_chat_resume, chat_context
+
+    @pytest.mark.asyncio
+    async def test_data_layer_error_sends_resume_thread_error(
+        self, mock_session_factory
+    ):
+        emitter, on_chat_resume, _ = await self._connect(
+            mock_session_factory, AsyncMock(side_effect=RuntimeError("storage down"))
+        )
+
+        emitter.send_resume_thread_error.assert_awaited_once_with(
+            "Failed to load conversation history."
+        )
+        on_chat_resume.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_bad_step_does_not_abort_resume(self, mock_session_factory):
+        thread = {
+            "id": "thread-1",
+            "steps": [
+                {"id": "bad", "type": "user_message"},
+                {"id": "good", "type": "assistant_message"},
+            ],
+        }
+        good = Mock()
+        message_cls = Mock()
+        message_cls.from_dict.side_effect = [KeyError("output"), good]
+
+        emitter, _, chat_context = await self._connect(
+            mock_session_factory, AsyncMock(return_value=thread), message_cls
+        )
+
+        chat_context.add.assert_called_once_with(good)
+        emitter.resume_thread.assert_awaited_once_with(thread)
+        emitter.send_resume_thread_error.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_emit_error_sends_resume_thread_error(self, mock_session_factory):
+        emitter, _, _ = await self._connect(
+            mock_session_factory,
+            AsyncMock(return_value={"id": "thread-1", "steps": []}),
+            emit_error=TypeError("Object of type datetime is not JSON serializable"),
+        )
+
+        emitter.send_resume_thread_error.assert_awaited_once_with(
+            "Failed to load conversation history."
+        )
+
+
 class TestConnectSessionIdValidation:
     """The client-supplied sessionId is used as a path component of the session files directory."""
 
