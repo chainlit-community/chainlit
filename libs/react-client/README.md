@@ -4,10 +4,18 @@ The `@chainlit/react-client` package provides a set of React hooks as well as an
 
 ## Installation
 
-To install the package, run the following command in your project directory:
+> ⚠️ **Note:** the `@chainlit/react-client` package on npmjs is the original project's last published release. It is not maintained or updated by this fork.
+
+This fork distributes the package as a tarball attached to [GitHub Releases](https://github.com/chainlit-community/chainlit/releases) instead of publishing it to npm. Find the current Chainlit release's version (`<version>`) and the package's own version shown in the asset name (`<client-version>`) on that page, then install the tarball directly:
 
 ```sh
-npm install @chainlit/react-client
+npm install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-react-client-<client-version>.tgz
+```
+
+With pnpm:
+
+```sh
+pnpm add https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-react-client-<client-version>.tgz
 ```
 
 This package use [Recoil](https://github.com/facebookexperimental/Recoil) to manage its state. This means you will have to wrap your application in a recoil provider:

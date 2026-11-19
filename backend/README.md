@@ -33,16 +33,42 @@ https://github.com/user-attachments/assets/b3738aba-55c0-42fa-ac00-6efd1ee0d148
 
 ## Installation
 
-Releases of this fork are not published to PyPI for now. They will be distributed through [GitHub Releases](https://github.com/chainlit-community/chainlit/releases). Until the first release, install this fork straight from GitHub:
+This fork does not publish to PyPI. Releases are distributed as a pre-built wheel through [GitHub Releases](https://github.com/chainlit-community/chainlit/releases). Find the current version on that page, then install it directly from the release asset:
+
+```sh
+pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
+```
+
+With uv:
+
+```sh
+uv add "chainlit @ https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl"
+# or, outside a project:
+uv pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
+```
+
+The wheel is self-contained — it bundles the built frontend and copilot widget — so installing it does not require Node or pnpm.
+
+No release of this fork has been published yet. Until the Releases page lists one, or if you need an unreleased fix, install from source instead:
 
 ```sh
 pip install git+https://github.com/chainlit-community/chainlit.git#subdirectory=backend/
+```
+
+(Requires Node and pnpm installed on the system, since this route builds the frontend.)
+
+```sh
 chainlit hello
 ```
 
-(Requires Node and pnpm installed on the system.)
-
 If this opens the `hello app` in your browser, you're all set!
+
+To verify a downloaded release asset, check it against the release's `SHA256SUMS` file and its build provenance attestation:
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS
+gh attestation verify chainlit-<version>-py3-none-any.whl -R chainlit-community/chainlit
+```
 
 > ⚠️ **Warning:** `pip install chainlit` installs the last release of the original project from PyPI. That package is unmaintained and does not receive the security fixes made in this fork. For security reasons, we strongly recommend that you do not install it.
 
