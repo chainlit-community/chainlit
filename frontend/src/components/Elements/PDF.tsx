@@ -32,6 +32,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 interface PDFViewerProps {
   url: string;
+  name?: string;
   className?: string;
   startPage?: number;
   persistentToolbar?: boolean;
@@ -39,6 +40,7 @@ interface PDFViewerProps {
 
 export function PDFViewer({
   url,
+  name,
   className,
   startPage = 1,
   persistentToolbar = false
@@ -74,6 +76,27 @@ export function PDFViewer({
   const handlePrint = (e: React.MouseEvent) => {
     e.stopPropagation();
     window.open(url, '_blank', 'noopener,noreferrer');
+  };
+  const handleDownload = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.stopPropagation();
+    // Browsers ignore `download` on cross-origin links (e.g. S3/Azure storage
+    // URLs), which would navigate to the inline-served PDF instead of saving it.
+    if (new URL(url, window.location.href).origin === window.location.origin) {
+      return;
+    }
+    e.preventDefault();
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blobUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = name || '';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+    } catch {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
   };
 
   return (
@@ -158,7 +181,7 @@ export function PDFViewer({
               href={url}
               download
               rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
+              onClick={handleDownload}
             >
               <Download className="h-4 w-4" />
             </a>
@@ -219,6 +242,7 @@ const PDFElement = ({ element }: Props) => {
     return (
       <PDFViewer
         url={element.url}
+        name={element.name}
         startPage={element.page}
         className={`${element.display}-pdf w-full h-[80vh] flex-1`}
       />
@@ -294,6 +318,7 @@ const PDFElement = ({ element }: Props) => {
             <div className="flex-1 w-full bg-background rounded-lg overflow-hidden flex flex-col">
               <PDFViewer
                 url={element.url}
+                name={element.name}
                 startPage={element.page}
                 persistentToolbar
                 className="w-full h-full"
