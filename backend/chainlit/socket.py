@@ -228,8 +228,8 @@ async def connection_successful(sid):
     if context.session.thread_id_to_resume and config.code.on_chat_resume:
         try:
             thread = await resume_thread(context.session)
-        except Exception as e:
-            logger.error(f"Failed to resume thread: {e!s}")
+        except Exception:
+            logger.exception("Failed to resume thread")
             await context.emitter.send_resume_thread_error(
                 "Failed to load conversation history."
             )
@@ -252,8 +252,8 @@ async def connection_successful(sid):
 
             try:
                 await context.emitter.resume_thread(thread)
-            except Exception as e:
-                logger.error(f"Failed to emit resume_thread: {e!s}")
+            except Exception:
+                logger.exception("Failed to emit resume_thread")
                 await context.emitter.send_resume_thread_error(
                     "Failed to load conversation history."
                 )
