@@ -501,3 +501,29 @@ class TestLintTranslationsExitCode:
         with patch("chainlit.config.config_translation_dir", str(tmp_path)):
             with patch("sys.stdout", new=StringIO()):
                 assert config_module.lint_translations() == 0
+
+    def test_cli_exits_non_zero_when_a_key_is_missing(self, tmp_path):
+        """The CLI command itself fails, so it can gate CI."""
+        from click.testing import CliRunner
+
+        from chainlit.cli import cli
+
+        self._seed_translation_dir(tmp_path, lambda payload: payload.pop("chat"))
+
+        with patch("chainlit.config.config_translation_dir", str(tmp_path)):
+            result = CliRunner().invoke(cli, ["lint-translations"])
+
+        assert result.exit_code == 1, result.output
+
+    def test_cli_exits_zero_when_translations_match(self, tmp_path):
+        """A clean translation keeps the command's success exit code."""
+        from click.testing import CliRunner
+
+        from chainlit.cli import cli
+
+        self._seed_translation_dir(tmp_path)
+
+        with patch("chainlit.config.config_translation_dir", str(tmp_path)):
+            result = CliRunner().invoke(cli, ["lint-translations"])
+
+        assert result.exit_code == 0, result.output
