@@ -1,18 +1,17 @@
 import asyncio
 from typing import Union
 
-from literalai import ChatGeneration, CompletionGeneration
-
 from chainlit.context import get_context
+from chainlit.generation import ChatGeneration, CompletionGeneration
 from chainlit.step import Step
 from chainlit.utils import timestamp_utc
 
 
 def instrument_mistralai():
-    from literalai.instrumentation.mistralai import instrument_mistralai
+    from chainlit._instrumentation.mistralai import instrument_mistralai
 
     def on_new_generation(
-        generation: Union["ChatGeneration", "CompletionGeneration"], timing
+        generation: Union[ChatGeneration, CompletionGeneration], timing
     ):
         context = get_context()
 
@@ -47,4 +46,4 @@ def instrument_mistralai():
 
         asyncio.create_task(step.send())
 
-    instrument_mistralai(None, on_new_generation)
+    instrument_mistralai(on_new_generation)

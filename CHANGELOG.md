@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The generation and step types (`cl.ChatGeneration`, `cl.CompletionGeneration`, `cl.GenerationMessage`, ...) and the OpenAI / Mistral AI instrumentation behind `cl.instrument_openai()` / `cl.instrument_mistralai()` now live in Chainlit itself. The `literalai` package is no longer a dependency, and neither are its transitive dependencies (`traceloop-sdk`, `chevron`, the `opentelemetry-instrumentation-*` and OTLP exporter packages, `anthropic`, `grpcio`, `cuid`, `inflection`, `docstring-parser`). Apps that `import literalai` (or any of those packages) themselves must add it to their own dependencies.
+- `cl.ChatGeneration` / `cl.CompletionGeneration` are now Chainlit's own classes rather than aliases of the `literalai` ones, so `isinstance()` checks no longer match `literalai` generation objects. Their fields and serialised form are unchanged.
+- `literalai_*` keyword arguments (`literalai_tags`, `literalai_metadata`, ...) passed to instrumented OpenAI / Mistral AI calls are still accepted for backward compatibility. This might be removed in a future release, so stop passing them.
+- `cl.instrument_mistralai()` now raises `ModuleNotFoundError` instead of a generic `Exception` when `mistralai` is not installed.
+
+### Fixed
+
+- `cl.instrument_mistralai()` no longer makes streaming calls (`chat.stream`, `fim.stream` and their `_async` variants) fail with `AttributeError` on mistralai 1.x releases that return `EventStream` objects.
+- `cl.instrument_openai()` no longer fails on responses without `usage` (some OpenAI-compatible servers omit it).
+
 ### Removed
 
 - **Breaking:** removed the LiteralAI data layer (`chainlit.data.literalai`, `LITERAL_API_KEY` / `LITERAL_API_URL` / `LITERAL_SERVER`). The service shut down on 2025-10-31. Migrate to the built-in data layer via `DATABASE_URL` or a custom `@cl.data_layer`.

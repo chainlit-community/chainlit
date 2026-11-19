@@ -1,9 +1,8 @@
 import asyncio
 from typing import Union
 
-from literalai import ChatGeneration, CompletionGeneration
-
 from chainlit.context import local_steps
+from chainlit.generation import ChatGeneration, CompletionGeneration
 from chainlit.step import Step
 from chainlit.utils import check_module_version, timestamp_utc
 
@@ -14,10 +13,10 @@ def instrument_openai():
             "Expected OpenAI version >= 1.0.0. Run `pip install openai --upgrade`"
         )
 
-    from literalai.instrumentation.openai import instrument_openai
+    from chainlit._instrumentation.openai import instrument_openai
 
     def on_new_generation(
-        generation: Union["ChatGeneration", "CompletionGeneration"], timing
+        generation: Union[ChatGeneration, CompletionGeneration], timing
     ):
         previous_steps = local_steps.get()
 
@@ -50,4 +49,4 @@ def instrument_openai():
 
         asyncio.create_task(step.send())
 
-    instrument_openai(None, on_new_generation)
+    instrument_openai(on_new_generation)
