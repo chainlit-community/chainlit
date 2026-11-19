@@ -279,7 +279,7 @@ class ChainlitDataLayer(BaseDataLayer):
             type=metadata.get("type", "file"),
             url=row.get("url"),
             name=str(row["name"]),
-            mime=str(row["mime"]) if row.get("mime") else None,
+            mime=row.get("mime"),
             objectKey=row.get("objectKey"),
             forId=str(row["stepId"]),
             chainlitKey=row.get("chainlitKey"),
