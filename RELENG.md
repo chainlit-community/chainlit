@@ -36,7 +36,7 @@ This document outlines the steps for maintainers to create a new release of the 
 
 6. **Bump `main` to the next version**:
    - Straight after publishing, open a PR that sets `version` in `backend/chainlit/version.py` to the next release version (e.g. 3.0.1 after releasing 3.0.0).
-   - This is required, not optional: the CI build refuses to run while a git tag equal to the version in `version.py` exists. See [Preview builds](#preview-builds).
+   - This is required, not optional: while a git tag equal to the version in `version.py` exists, builds of `main` fail, so no preview release is published (pull request builds only warn). See [Preview builds](#preview-builds).
 
 ## RC (Release Candidate) Releases
 
