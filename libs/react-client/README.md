@@ -10,6 +10,20 @@ To install the package, run the following command in your project directory:
 npm install @chainlit/react-client
 ```
 
+### Preview builds
+
+Preview builds of this package are not published to npm. Each [pre-release on GitHub](https://github.com/chainlit-community/chainlit/releases) of the community fork includes a tarball, which you can install by URL. Replace `<version>` with the release tag (e.g. `3.0.0.dev1234`) and `<client-version>` with the version in the tarball's file name (e.g. `0.5.0-dev.1234`); the release notes have the exact commands.
+
+```sh
+# npm
+npm install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-react-client-<client-version>.tgz
+
+# pnpm
+pnpm add https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-react-client-<client-version>.tgz
+```
+
+npm 12 and later refuse tarball URLs outside the registry by default. Add `--allow-remote=root` to the command, or set `allow-remote=root` in your project's `.npmrc`.
+
 This package use [Recoil](https://github.com/facebookexperimental/Recoil) to manage its state. This means you will have to wrap your application in a recoil provider:
 
 ```tsx

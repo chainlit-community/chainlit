@@ -212,3 +212,5 @@ pnpm test:e2e:interactive # runs `cypress open`
 ```
 
 Once you create a pull request, the tests will automatically run. It is a good practice to run the tests locally before pushing.
+
+CI also builds the package once per run and the E2E tests run against that build. When CI finishes, a comment on the pull request gives the build version and the commands to download the build (`gh run download`, requires a GitHub login) and install the wheel locally, so reviewers can try the change without building it. These artifacts expire.

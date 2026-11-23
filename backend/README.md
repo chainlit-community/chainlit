@@ -33,16 +33,43 @@ https://github.com/user-attachments/assets/b3738aba-55c0-42fa-ac00-6efd1ee0d148
 
 ## Installation
 
-Releases of this fork are not published to PyPI for now. They will be distributed through [GitHub Releases](https://github.com/chainlit-community/chainlit/releases). Until the first release, install this fork straight from GitHub:
+Releases of this fork are not published to PyPI for now. They are distributed through [GitHub Releases](https://github.com/chainlit-community/chainlit/releases).
+
+### Preview builds
+
+Every commit on `main` that passes CI is published there as a pre-release, with a version such as `3.0.0.dev1234`. Pick one from the [Releases page](https://github.com/chainlit-community/chainlit/releases) and install its wheel by URL, replacing `<version>`:
 
 ```sh
-pip install git+https://github.com/chainlit-community/chainlit.git#subdirectory=backend/
+# pip
+pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
+
+# uv
+uv add "chainlit @ https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl"
+uv pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
+
+# poetry
+poetry add https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
+```
+
+The notes of each release have these commands with the version filled in, plus how to verify the download against `SHA256SUMS` and its build provenance attestation. The wheel includes the built frontend, so Node and pnpm are not needed.
+
+Then check that it works:
+
+```sh
 chainlit hello
 ```
 
-(Requires Node and pnpm installed on the system.)
-
 If this opens the `hello app` in your browser, you're all set!
+
+### From source
+
+To install the current state of `main` (or another branch) straight from GitHub:
+
+```sh
+pip install git+https://github.com/chainlit-community/chainlit.git#subdirectory=backend/
+```
+
+(Requires Node and pnpm installed on the system.)
 
 > ⚠️ **Warning:** `pip install chainlit` installs the last release of the original project from PyPI. That package is unmaintained and does not receive the security fixes made in this fork. For security reasons, we strongly recommend that you do not install it.
 
