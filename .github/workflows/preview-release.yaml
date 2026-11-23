@@ -5,6 +5,8 @@ name: Preview release
 #
 # Nothing is built here: the files CI built and tested are published as they
 # are, after their checksums were verified.
+# Their build provenance was attested by that CI run (the attest job in
+# ci.yaml), so it names the commit they were built from.
 #
 # Releases created with GITHUB_TOKEN do not trigger other workflows, so
 # publish.yaml and publish-libs.yaml (`on: release: published`) do NOT run for
@@ -52,8 +54,6 @@ jobs:
     permissions:
       actions: read # read the CI run and download its artifact
       contents: write # create the tag and the release
-      id-token: write # Sigstore signing certificate for the attestation
-      attestations: write # store the attestation
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -135,13 +135,6 @@ jobs:
           else
             echo "exists=false" >>"$GITHUB_OUTPUT"
           fi
-
-      # One attestation whose subjects are exactly the files in SHA256SUMS.
-      - name: Attest build provenance
-        if: steps.existing.outputs.exists == 'false'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-checksums: ${{ runner.temp }}/dist/SHA256SUMS
 
       - name: Write the release notes
         if: steps.existing.outputs.exists == 'false'
