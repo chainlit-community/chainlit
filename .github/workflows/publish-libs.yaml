@@ -32,6 +32,12 @@ jobs:
     needs: [validate]
     uses: ./.github/workflows/ci.yaml
     secrets: inherit
+    # ci.yaml's attest job asks for these (it only runs for pushes to main);
+    # a called workflow cannot hold more permissions than its caller.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
   build-n-publish:
     name: Upload libs release to npm registry
     runs-on: ubuntu-latest
