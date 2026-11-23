@@ -26,10 +26,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `cl.ChatGeneration` / `cl.CompletionGeneration` are now Chainlit's own classes rather than aliases of the `literalai` ones, so `isinstance()` checks no longer match `literalai` generation objects. Their fields and serialised form are unchanged.
 - `literalai_*` keyword arguments (`literalai_tags`, `literalai_metadata`, ...) passed to instrumented OpenAI / Mistral AI calls are still accepted for backward compatibility. This might be removed in a future release, so stop passing them.
 - `cl.instrument_mistralai()` now raises `ModuleNotFoundError` instead of a generic `Exception` when `mistralai` is not installed.
-- **Breaking:** Chainlit now requires Python `>=3.11.5,<3.14.0` (was `>=3.10,<3.14.0`). Python 3.10 and 3.11.0 to 3.11.4 are no longer supported; installers on those interpreters keep resolving to an older release. Move to Python 3.11.5 or later before upgrading, including in base images and CI matrices.
+- **Breaking:** Chainlit now requires Python `>=3.11.5,<3.14.0` (was `>=3.10,<3.14.0`). Python 3.10 and 3.11.0 to 3.11.4 are no longer supported: `chainlit-community` does not install on those interpreters. Move to Python 3.11.5 or later before upgrading, including in base images and CI matrices.
 - `chainlit lint-translations` now exits with status 1 when a translation file in `.chainlit/translations` differs from the packaged `en-US.json` (a missing key, an extra key or a structure mismatch), and prints the number of differences. It used to print them and exit 0. Locale files copied into `.chainlit/translations` by earlier versions lack the new `chat.messages.actions.debug` key, so a CI step that runs the command reports them: add the missing keys to the files you customised, and delete the ones you did not, which are recreated from the packaged files on the next start.
 - The debug button's tooltip reads "Debug" instead of "Debug in Literal AI". Its text is the new translation key `chat.messages.actions.debug`, added to every packaged locale.
 - Building Chainlit from source requires Node.js 24 or later. Installing the wheel does not need Node.js.
+- The package summary shown on PyPI now says that this is the community maintenance fork of Chainlit.
 
 ### Fixed
 
