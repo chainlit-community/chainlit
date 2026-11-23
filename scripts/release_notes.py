@@ -37,17 +37,28 @@ MAX_BUILD_INFO_BYTES = 64 * 1024
 RELEASE = "release"
 PR = "pr"
 
-_BASE_VERSION_RE = re.compile(r"(?:0|[1-9]\d{0,5})(?:\.(?:0|[1-9]\d{0,5})){2}")
-# semver with a mandatory pre-release part and optional build metadata.
+# Every pattern is used with fullmatch() and spells out [0-9]: \d would also
+# match non-ASCII digits. The version shapes are those scripts/ci_version.py
+# accepts and produces.
+_NUMBER = r"(?:0|[1-9][0-9]{0,5})"
+# Canonical PEP 440: two to four release components and an optional aN / bN /
+# rcN pre-release (3.0.0, 2.0rc0, 3.0.0rc1, 2.7.1.1).
+_BASE_VERSION_RE = re.compile(
+    rf"{_NUMBER}(?:\.{_NUMBER}){{1,3}}(?:(?:a|b|rc){_NUMBER})?"
+)
+# semver: X.Y.Z-dev.<N>, or X.Y.Z-<prerelease>.dev.<N> for a pre-release base,
+# with optional build metadata.
+_SEMVER_IDENTIFIER = rf"(?:{_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 _CLIENT_VERSION_RE = re.compile(
-    r"(?:0|[1-9]\d{0,5})(?:\.(?:0|[1-9]\d{0,5})){2}"
-    r"-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+){0,7}"
+    rf"{_NUMBER}(?:\.{_NUMBER}){{2}}"
+    rf"-(?:(?P<prerelease>{_SEMVER_IDENTIFIER}(?:\.{_SEMVER_IDENTIFIER}){{0,7}})\.)?"
+    r"dev\.(?P<build_number>[1-9][0-9]{0,9})"
     r"(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+){0,7})?"
 )
 _SHA_RE = re.compile(r"[0-9a-f]{40}")
-_RUN_ID_RE = re.compile(r"[1-9]\d{0,19}")
+_RUN_ID_RE = re.compile(r"[1-9][0-9]{0,19}")
 _REPO_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}")
-_PR_LOCAL_RE = re.compile(r"pr([1-9]\d{0,9})\.g([0-9a-f]{7})")
+_PR_LOCAL_RE = re.compile(r"pr([1-9][0-9]{0,9})\.g([0-9a-f]{7})")
 _MAX_VERSION_LENGTH = 80
 _MAX_INT = 10**10
 
@@ -117,6 +128,17 @@ def parse_build_info(data: object) -> BuildInfo:
     sha = _string(data, "sha", _SHA_RE)
     run_id = _string(data, "run_id", _RUN_ID_RE)
     client_version = _string(data, "client_version", _CLIENT_VERSION_RE)
+    client = _CLIENT_VERSION_RE.fullmatch(client_version)
+    # A base that already has a "dev" identifier is a tree stamped twice.
+    if (
+        client is None
+        or int(client["build_number"]) != build_number
+        or "dev" in (client["prerelease"] or "").split(".")
+    ):
+        raise ValidationError(
+            "build-info: 'client_version' must be the react-client version + "
+            "'-dev.' (or '.dev.' after a pre-release) + build_number"
+        )
     ref = _string(data, "ref")
     event = _string(data, "event")
 
@@ -323,7 +345,7 @@ def render_pr_comment(
         raise ValidationError("--head-sha must be a full lowercase commit SHA")
     run_url = f"https://github.com/{repo}/actions/runs/{info.run_id}"
     if artifact_url is not None and not re.fullmatch(
-        re.escape(run_url) + r"/artifacts/[1-9]\d{0,19}", artifact_url
+        re.escape(run_url) + r"/artifacts/[1-9][0-9]{0,19}", artifact_url
     ):
         raise ValidationError("--artifact-url is not an artifact of this run")
 
