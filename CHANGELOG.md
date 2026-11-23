@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `cl.instrument_mistralai()` no longer makes streaming calls (`chat.stream`, `fim.stream` and their `_async` variants) fail with `AttributeError` on mistralai 1.x releases that return `EventStream` objects.
 - `cl.instrument_openai()` no longer fails on responses without `usage` (some OpenAI-compatible servers omit it).
+- Images, PDFs, audio and video elements saved by the SQLAlchemy, DynamoDB and Chainlit data layers are now stored with `Content-Disposition: inline` instead of `attachment` (the Chainlit data layer used `attachment` for every file), so opening their storage URL (S3, Azure) in a browser displays them instead of forcing a download. Other elements keep `attachment` where it was set before. Files already stored keep their old metadata and are only updated when uploaded again. The download button of the PDF viewer still saves the file when the PDF is served from a storage URL on another origin.
 
 ### Removed
 
