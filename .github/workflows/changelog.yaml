@@ -1,0 +1,45 @@
+name: Changelog
+
+# Fails a pull request that changes user-facing code without touching
+# CHANGELOG.md. A maintainer can waive it with the `no changelog` label (see
+# AGENTS.md, Changelog). Standalone rather than part of ci.yaml, so that
+# adding or removing the label re-runs only this check.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  merge_group: # only so that a required check does not block the queue
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: Changelog entry
+    runs-on: ubuntu-slim
+    steps:
+      - name: Skip in the merge queue
+        if: github.event_name == 'merge_group'
+        run: echo "Checked on the pull request."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'no changelog')
+        with:
+          # The pull request's merge commit and its parents; HEAD^1 is the base.
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Require a changelog entry for user-facing changes
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'no changelog')
+        shell: bash
+        run: |
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if ! grep -qE '^(backend/chainlit/|backend/pyproject\.toml$|frontend/src/|libs/[^/]+/src/)' <<<"$changed"; then
+            echo "No user-facing files changed."
+            exit 0
+          fi
+          if grep -qx 'CHANGELOG.md' <<<"$changed"; then
+            echo "CHANGELOG.md is updated."
+            exit 0
+          fi
+          echo "::error file=CHANGELOG.md::This pull request changes user-facing code but not CHANGELOG.md. Add an entry under '## [Unreleased]' (see AGENTS.md, Changelog), or ask a maintainer for the 'no changelog' label."
+          exit 1
