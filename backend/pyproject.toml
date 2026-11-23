@@ -13,7 +13,7 @@ keywords = [
     "langchain",
     "conversational ai",
 ]
-description = "Build Conversational AI."
+description = "Community maintenance fork of Chainlit, the framework for building conversational AI apps, by a former core maintainer. Security and bug fixes, no new features."
 authors = [
     { name = "Willy Douhard" },
     { name = "Dan Andre Constantini" }
