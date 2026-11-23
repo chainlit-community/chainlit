@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - The version in `backend/chainlit/version.py` is now `3.0.0`, the next release, because breaking changes have already been merged. CI derives the version of each build from it.
+- `@chainlit/react-client` is now version `0.6.0`, the next release of the package, so that its preview builds (`0.6.0-dev.<N>`) sort above the `0.5.0` already on npm.
 
 - The generation and step types (`cl.ChatGeneration`, `cl.CompletionGeneration`, `cl.GenerationMessage`, ...) and the OpenAI / Mistral AI instrumentation behind `cl.instrument_openai()` / `cl.instrument_mistralai()` now live in Chainlit itself. The `literalai` package is no longer a dependency, and neither are its transitive dependencies (`traceloop-sdk`, `chevron`, the `opentelemetry-instrumentation-*` and OTLP exporter packages, `anthropic`, `grpcio`, `cuid`, `inflection`, `docstring-parser`). Apps that `import literalai` (or any of those packages) themselves must add it to their own dependencies.
 - `cl.ChatGeneration` / `cl.CompletionGeneration` are now Chainlit's own classes rather than aliases of the `literalai` ones, so `isinstance()` checks no longer match `literalai` generation objects. Their fields and serialised form are unchanged.

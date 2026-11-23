@@ -12,7 +12,7 @@ npm install @chainlit/react-client
 
 ### Preview builds
 
-Preview builds of this package are not published to npm. Each [pre-release on GitHub](https://github.com/chainlit-community/chainlit/releases) of the community fork includes a tarball, which you can install by URL. Replace `<version>` with the release tag (e.g. `3.0.0.dev1234`) and `<client-version>` with the version in the tarball's file name (e.g. `0.5.0-dev.1234`); the release notes have the exact commands.
+Preview builds of this package are not published to npm. Each [pre-release on GitHub](https://github.com/chainlit-community/chainlit/releases) of the community fork includes a tarball, which you can install by URL. Replace `<version>` with the release tag (e.g. `3.0.0.dev1234`) and `<client-version>` with the version in the tarball's file name (e.g. `0.6.0-dev.1234`); the release notes have the exact commands.
 
 ```sh
 # npm

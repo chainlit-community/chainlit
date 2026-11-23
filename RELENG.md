@@ -65,11 +65,11 @@ The E2E tests install that wheel instead of building their own, so they test the
 | ------------ | ---------------------------------- | ----------------------------- |
 | `main`       | `<base>.dev<N>`                    | `3.0.0.dev1234`               |
 | Pull request | `<base>.dev<N>+pr<number>.g<sha7>` | `3.0.0.dev1234+pr56.gabc1234` |
-| react-client | `<package.json version>-dev.<N>`   | `0.5.0-dev.1234`              |
+| react-client | `<package.json version>-dev.<N>`   | `0.6.0-dev.1234`              |
 
 Under PEP 440, `3.0.0.dev1234` sorts above `2.12.0` and below `3.0.0`, so a preview build is never mistaken for the release it precedes.
 
-The same holds while `version.py` holds a release candidate: `3.0.0rc1` builds as `3.0.0rc1.dev1234`, which sorts below `3.0.0rc1`. A react-client pre-release gets `.dev.<N>` appended instead, e.g. `0.5.0-rc.1.dev.1234`.
+The same holds while `version.py` holds a release candidate: `3.0.0rc1` builds as `3.0.0rc1.dev1234`, which sorts below `3.0.0rc1`. A react-client pre-release gets `.dev.<N>` appended instead, e.g. `0.6.0-rc.1.dev.1234`.
 
 **Pull requests.** When CI finishes on a pull request, `.github/workflows/pr-build-comment.yaml` posts (or updates) one comment on the PR with the build version and the commands to download the `dist` artifact and install the wheel. Workflow artifacts need a GitHub login to download, and they expire.
 
