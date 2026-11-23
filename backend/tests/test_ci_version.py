@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 from pathlib import Path
 from types import ModuleType
@@ -72,7 +73,26 @@ def commit(root: Path, message: str = "commit") -> str:
 
 
 def set_version(root: Path, version: str) -> None:
-    (root / ci_version.VERSION_FILE).write_text(f'__version__ = "{version}"\n')
+    (root / ci_version.VERSION_FILE).write_text(
+        f'__version__ = "{version}"\n', encoding="utf-8"
+    )
+
+
+def set_client_version(root: Path, version: str) -> None:
+    (root / ci_version.CLIENT_PACKAGE_JSON).write_text(
+        PACKAGE_JSON.replace('"version": "0.5.0"', f'"version": "{version}"'),
+        encoding="utf-8",
+    )
+
+
+# https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
+# with \d spelled out as [0-9].
+SEMVER_RE = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-((?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+    r"(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
+)
 
 
 @pytest.fixture
@@ -217,22 +237,176 @@ def test_later_builds_sort_higher(repo: Path):
     assert first < second
 
 
+BASE_VERSIONS = [
+    "3.0.0",
+    "3.0",
+    "2.0rc0",
+    "2.4.0rc0",
+    "3.0.0a1",
+    "3.0.0b2",
+    "3.0.0rc1",
+    "2.7.1.1",
+    "2.7.1.1rc10",
+]
+
+
+@pytest.mark.parametrize("base", BASE_VERSIONS)
 @pytest.mark.parametrize(
-    "version", ["3.0.0rc1", "3.0.0.dev5", "3.0", "v3.0.0", "3.0.0+local", "03.0.0"]
+    ("event", "ref", "local"),
+    [
+        ("push", "refs/heads/main", ""),
+        ("pull_request", "refs/pull/42/merge", "+pr42.g0123456"),
+        ("merge_group", "refs/heads/gh-readonly-queue/main/pr-42-abc", "+mq.g0123456"),
+    ],
 )
-def test_non_release_base_version_is_rejected(repo: Path, version: str):
+def test_base_version_shapes(repo: Path, base: str, event: str, ref: str, local: str):
+    set_version(repo, base)
+
+    info = compute(repo, event, ref)
+
+    version = info["version"]
+    assert info["base_version"] == base
+    assert version == f"{base}.dev3{local}"
+    assert info["files"]["wheel"] == f"chainlit-{version}-py3-none-any.whl"
+    assert info["files"]["sdist"] == f"chainlit-{version}.tar.gz"
+    # Valid, and already in the normalized form build tools put in file names.
+    assert str(Version(base)) == base
+    assert str(Version(version)) == version
+    assert Version(version).is_devrelease
+    assert Version(version) < Version(base)
+
+
+def test_release_candidate_builds_sort_between_releases(repo: Path):
+    set_version(repo, "3.0.0rc1")
+    candidate_build = compute(repo, "push", "refs/heads/main", number=1234)["version"]
+    set_version(repo, "3.0.0")
+    final_build = compute(repo, "push", "refs/heads/main", number=1234)["version"]
+
+    assert (candidate_build, final_build) == ("3.0.0rc1.dev1234", "3.0.0.dev1234")
+    # PEP 440 puts the dev builds of a final release *before* its pre-releases,
+    # so main must carry the next rcN (not the final version) after an RC.
+    assert (
+        Version("2.12.0")
+        < Version(final_build)
+        < Version(candidate_build)
+        < Version("3.0.0rc1")
+        < Version("3.0.0rc2.dev1235")
+        < Version("3.0.0rc2")
+        < Version("3.0.0")
+    )
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "3",
+        "3.0.0.0.0",
+        "v3.0.0",
+        "03.0.0",
+        "3.00.0",
+        "3.0.0.dev5",
+        "3.0.0rc1.dev5",
+        "3.0.0.post1",
+        "3.0.0rc1.post1",
+        "3.0.0+local",
+        "3.0.0rc1+local",
+        "1!3.0.0",
+        # Not the canonical PEP 440 spelling of a pre-release.
+        "3.0.0-rc",
+        "3.0.0-rc1",
+        "3.0.0-rc.1",
+        "3.0.0.rc1",
+        "3.0.0_rc1",
+        "3.0.0rc",
+        "3.0.0rc01",
+        "3.0.0RC1",
+        "3.0.0c1",
+        "3.0.0alpha1",
+        "3.0.0a1b2",
+        "3.0.0rc1 ",
+        "3.0.0rc1\\n",
+        # Digits, but not ASCII ones: Arabic-Indic and fullwidth.
+        "\u0663.0.0",
+        "3.0.\uff10",
+        "3.0.0rc\u0661",
+        "",
+    ],
+)
+def test_other_base_versions_are_rejected(repo: Path, version: str):
     set_version(repo, version)
 
-    with pytest.raises(ci_version.VersionError, match=r"plain X\.Y\.Z"):
+    with pytest.raises(ci_version.VersionError, match=r"PEP 440 form.*3\.0\.0rc1"):
         compute(repo, "push", "refs/heads/main")
 
 
-def test_non_release_client_version_is_rejected(repo: Path):
+@pytest.mark.parametrize(
+    ("base", "stamped"),
+    [
+        ("0.5.0", "0.5.0-dev.3"),
+        ("0.5.0-rc.1", "0.5.0-rc.1.dev.3"),
+        ("0.5.0-rc", "0.5.0-rc.dev.3"),
+        ("0.5.0-beta-2.x", "0.5.0-beta-2.x.dev.3"),
+        ("1.0.0-0.3.7", "1.0.0-0.3.7.dev.3"),
+        ("1.0.0-devel", "1.0.0-devel.dev.3"),
+    ],
+)
+def test_client_version_shapes(repo: Path, base: str, stamped: str):
+    set_client_version(repo, base)
+
+    info = compute(repo, "pull_request", "refs/pull/42/merge")
+
+    assert info["client_version"] == stamped
+    assert info["files"]["react_client"] == f"chainlit-react-client-{stamped}.tgz"
+    assert SEMVER_RE.fullmatch(base)
+    assert SEMVER_RE.fullmatch(stamped)
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "0.5",
+        "0.5.0.1",
+        "v0.5.0",
+        "00.5.0",
+        "0.5.0-",
+        "0.5.0-rc..1",
+        "0.5.0-rc.01",
+        "0.5.0-rc_1",
+        "0.5.0-rc.1+build",
+        "0.5.0+build",
+        "0.5.0rc1",
+        # Already stamped.
+        "0.5.0-dev.3",
+        "0.5.0-rc.1.dev.3",
+        "0.5.0-rc.1\\n",
+        "0.\u0665.0",
+        "0.5.0-rc.\uff11",
+        "0.5.0-\u00e9",
+    ],
+)
+def test_other_client_versions_are_rejected(repo: Path, version: str):
+    set_client_version(repo, version)
+
+    with pytest.raises(ci_version.VersionError, match=r"package\.json.*semver"):
+        compute(repo, "push", "refs/heads/main")
+
+
+def test_client_version_must_be_a_string(repo: Path):
     path = repo / ci_version.CLIENT_PACKAGE_JSON
-    path.write_text(PACKAGE_JSON.replace('"0.5.0"', '"0.5.0-dev.3"'))
+    path.write_text(PACKAGE_JSON.replace('"version": "0.5.0"', '"version": 5'))
 
     with pytest.raises(ci_version.VersionError, match=r"package\.json"):
         compute(repo, "push", "refs/heads/main")
+
+
+@pytest.mark.parametrize("number", ["\u0664\u0662", "\uff14\uff12", "\u00b2", "4 2"])
+def test_non_ascii_pull_request_number_is_rejected(repo: Path, number: str):
+    with pytest.raises(ci_version.VersionError, match="Invalid pull request number"):
+        compute(repo, "pull_request", "refs/heads/feature", pr_number=number)
+
+    # Nor is such a number picked up from the ref.
+    with pytest.raises(ci_version.VersionError, match="pull request number"):
+        compute(repo, "pull_request", f"refs/pull/{number}/merge")
 
 
 def test_invalid_sha_is_rejected(repo: Path):
@@ -297,6 +471,25 @@ def test_tag_guard_ignores_other_tags(repo: Path):
     assert compute(repo, "push", "refs/heads/main")["version"] == "3.0.0.dev4"
 
 
+@pytest.mark.parametrize("base", ["3.0.0rc1", "2.0rc0", "2.7.1.1"])
+def test_tag_guard_covers_every_base_version_shape(repo: Path, base: str, capsys):
+    set_version(repo, base)
+    commit(repo, f"prepare {base}")
+    git(repo, "tag", base)
+
+    # The tagged commit itself still builds ...
+    assert compute(repo, "push", "refs/heads/main")["version"] == f"{base}.dev4"
+
+    # ... later ones only once the version is bumped.
+    commit(repo, "work after the release")
+    with pytest.raises(ci_version.VersionError, match="already exists"):
+        compute(repo, "push", "refs/heads/main")
+    assert compute(repo, "pull_request", "refs/pull/7/merge")["version"] == (
+        f"{base}.dev5+pr7.g0123456"
+    )
+    assert f"::warning::Tag {base} already exists" in capsys.readouterr().err
+
+
 def test_tag_guard_passes_once_the_version_is_bumped(repo: Path):
     git(repo, "tag", "3.0.0")
     set_version(repo, "3.0.1")
@@ -330,6 +523,26 @@ def test_stamp_write_rewrites_both_files(repo: Path):
     assert (repo / ci_version.CLIENT_PACKAGE_JSON).read_text() == PACKAGE_JSON.replace(
         '"version": "0.5.0"', '"version": "0.5.0-dev.3"'
     )
+
+
+def test_stamp_write_handles_pre_release_bases(repo: Path):
+    set_version(repo, "3.0.0rc1")
+    set_client_version(repo, "0.5.0-rc.1")
+    commit(repo, "release candidate")
+    args = ("stamp", "--write", "--event", "push", "--ref", "refs/heads/main")
+
+    assert run_main(repo, *args) == 0
+
+    assert (repo / ci_version.VERSION_FILE).read_text() == (
+        '__version__ = "3.0.0rc1.dev4"\n'
+    )
+    assert json.loads((repo / ci_version.CLIENT_PACKAGE_JSON).read_text())[
+        "version"
+    ] == ("0.5.0-rc.1.dev.4")
+    # Both stamped files are recognised as such.
+    assert run_main(repo, *args) == 1
+    set_version(repo, "3.0.0rc1")
+    assert run_main(repo, *args) == 1
 
 
 def test_stamping_twice_is_rejected(repo: Path, capsys: pytest.CaptureFixture):

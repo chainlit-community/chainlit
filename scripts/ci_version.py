@@ -8,14 +8,16 @@ Standard library only, so it runs before anything is installed:
     python scripts/ci_version.py finalize --dist dist
 
 Versioning scheme, with ``base`` the release version in
-``backend/chainlit/version.py`` and ``N`` the number of commits reachable from
-HEAD:
+``backend/chainlit/version.py`` (``3.0.0``, or a pre-release such as
+``3.0.0rc1``) and ``N`` the number of commits reachable from HEAD:
 
 * push to ``main``    -> ``<base>.dev<N>``
 * anything else       -> ``<base>.dev<N>+<label>.g<sha7>``, the label being
   ``pr<number>`` for pull requests, ``mq`` for merge queues and the sanitized
   ref name otherwise
-* ``@chainlit/react-client`` -> ``<package.json version>-dev.<N>``
+* ``@chainlit/react-client`` -> ``<package.json version>-dev.<N>``, or
+  ``<package.json version>.dev.<N>`` when that version already is a
+  pre-release (``0.5.0-rc.1`` -> ``0.5.0-rc.1.dev.<N>``)
 
 ``stamp`` prints the build metadata and, with ``--write``, rewrites
 ``version.py`` and the react-client ``package.json`` in place. ``finalize``
@@ -39,12 +41,26 @@ CLIENT_PACKAGE_JSON = Path("libs", "react-client", "package.json")
 BUILD_INFO_NAME = "build-info.json"
 CHECKSUMS_NAME = "SHA256SUMS"
 
-RELEASE_RE = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+# All patterns spell out [0-9]: \d would also match non-ASCII digits.
+_NUMBER = r"(?:0|[1-9][0-9]*)"
+# Canonical PEP 440 public version without epoch, .post, .dev or local part:
+# two to four release components and an optional aN / bN / rcN pre-release.
+BASE_VERSION_RE = re.compile(
+    rf"{_NUMBER}(?:\.{_NUMBER}){{1,3}}(?:(?:a|b|rc){_NUMBER})?"
+)
+# semver X.Y.Z with an optional pre-release and no build metadata.
+_SEMVER_IDENTIFIER = rf"(?:{_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+CLIENT_VERSION_RE = re.compile(
+    rf"{_NUMBER}(?:\.{_NUMBER}){{2}}"
+    rf"(?:-(?P<prerelease>{_SEMVER_IDENTIFIER}(?:\.{_SEMVER_IDENTIFIER})*))?"
+)
+# The pre-release identifier this script adds; a base that has it is stamped.
+DEV_IDENTIFIER = "dev"
 VERSION_PY_RE = re.compile(
     r"""^(__version__\s*=\s*)(["'])([^"']*)(["'])""", re.MULTILINE
 )
 PACKAGE_JSON_VERSION_RE = re.compile(r'^(\s*"version"\s*:\s*")([^"]*)(")', re.MULTILINE)
-PR_REF_RE = re.compile(r"refs/pull/(\d+)/")
+PR_REF_RE = re.compile(r"refs/pull/([0-9]+)/")
 MAX_LABEL_LENGTH = 40
 
 
@@ -71,10 +87,12 @@ def read_base_version(root: Path) -> str:
     if not match:
         raise VersionError(f"No __version__ assignment found in {path}")
     version = match.group(3)
-    if not RELEASE_RE.fullmatch(version):
+    if not BASE_VERSION_RE.fullmatch(version):
         raise VersionError(
-            f"{VERSION_FILE.as_posix()} holds {version!r}, expected a plain X.Y.Z "
-            "release version (is the tree already stamped?)"
+            f"{VERSION_FILE.as_posix()} holds {version!r}, expected a release "
+            "version in its canonical PEP 440 form, such as 3.0.0 or 3.0.0rc1: two "
+            "to four numbers and an optional aN, bN or rcN pre-release (is the tree "
+            "already stamped?)"
         )
     return version
 
@@ -82,12 +100,20 @@ def read_base_version(root: Path) -> str:
 def read_client_version(root: Path) -> str:
     path = root / CLIENT_PACKAGE_JSON
     version = json.loads(path.read_text(encoding="utf-8")).get("version")
-    if not isinstance(version, str) or not RELEASE_RE.fullmatch(version):
+    match = CLIENT_VERSION_RE.fullmatch(version) if isinstance(version, str) else None
+    if not match or DEV_IDENTIFIER in (match["prerelease"] or "").split("."):
         raise VersionError(
             f"{CLIENT_PACKAGE_JSON.as_posix()} holds version {version!r}, expected "
-            "a plain X.Y.Z release version (is the tree already stamped?)"
+            "a semver release version such as 0.5.0 or 0.5.0-rc.1 (is the tree "
+            "already stamped?)"
         )
     return version
+
+
+def stamp_client_version(base: str, number: int) -> str:
+    """Append the build number as semver pre-release identifiers."""
+    separator = "." if "-" in base else "-"
+    return f"{base}{separator}{DEV_IDENTIFIER}.{number}"
 
 
 def write_python_version(root: Path, version: str) -> None:
@@ -120,7 +146,7 @@ def build_number(root: Path) -> int:
             "Fetch the full history (fetch-depth: 0) or pass --build-number."
         )
     count = git(root, "rev-list", "--count", "HEAD")
-    if count is None or not count.isdigit():
+    if count is None or not re.fullmatch(r"[0-9]+", count):
         raise VersionError(
             "Could not count commits with git; pass --build-number instead."
         )
@@ -171,7 +197,8 @@ def sanitize_label(value: str) -> str:
 
 def resolve_pr_number(pr_number: str | None, ref: str) -> int | None:
     if pr_number:
-        if not pr_number.isdigit():
+        # Not str.isdigit(): that accepts non-ASCII digits too.
+        if not re.fullmatch(r"[0-9]+", pr_number):
             raise VersionError(f"Invalid pull request number: {pr_number!r}")
         return int(pr_number)
     match = PR_REF_RE.match(ref)
@@ -216,7 +243,7 @@ def compute(
     version = f"{base}.dev{number}"
     if not preview:
         version += f"+{local_label(event, ref, pr)}.g{sha[:7]}"
-    client_version = f"{client_base}-dev.{number}"
+    client_version = stamp_client_version(client_base, number)
 
     return {
         "version": version,

@@ -3,6 +3,7 @@
 import copy
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -294,7 +295,259 @@ def test_accepts_client_tarball_without_build_metadata():
     assert rn.parse_build_info(data).client_version.endswith("+pr77.g0123456")
 
 
+def _retarget(info: dict, base: str, client: str) -> dict:
+    """The same build, for other base versions of chainlit and react-client."""
+    old_base = info["base_version"]
+    number = info["build_number"]
+    version = info["version"].replace(old_base, base, 1)
+    separator = "." if "-" in client else "-"
+    client_version = f"{client}{separator}dev.{number}"
+    return _with(
+        info,
+        base_version=base,
+        version=version,
+        client_version=client_version,
+        files_wheel=f"chainlit-{version}-py3-none-any.whl",
+        files_sdist=f"chainlit-{version}.tar.gz",
+        files_react_client=f"chainlit-react-client-{client_version}.tgz",
+    )
+
+
+@pytest.mark.parametrize("info", [MAIN_INFO, PR_INFO], ids=["release", "pr"])
+@pytest.mark.parametrize(
+    "base",
+    ["3.0", "2.0rc0", "2.4.0rc0", "3.0.0a1", "3.0.0b2", "3.0.0rc1", "2.7.1.1"],
+)
+@pytest.mark.parametrize("client", ["0.5.0", "0.5.0-rc.1", "0.5.0-beta-2.x"])
+def test_accepts_every_base_version_shape(info: dict, base: str, client: str):
+    data = _retarget(info, base, client)
+
+    parsed = rn.parse_build_info(data)
+
+    assert parsed.base_version == base
+    assert parsed.version == data["version"]
+    assert parsed.version.startswith(f"{base}.dev{info['build_number']}")
+    assert parsed.client_version == data["client_version"]
+    assert parsed.wheel == f"chainlit-{parsed.version}-py3-none-any.whl"
+    assert parsed.react_client == (f"chainlit-react-client-{parsed.client_version}.tgz")
+
+
+def test_release_candidate_versions_are_rendered():
+    info = rn.parse_build_info(_retarget(MAIN_INFO, "3.0.0rc1", "0.5.0-rc.1"))
+    body = rn.render_release(info, REPO)
+    base = f"https://github.com/{REPO}/releases/download/3.0.0rc1.dev1234"
+    assert f"pip install {base}/chainlit-3.0.0rc1.dev1234-py3-none-any.whl" in body
+    assert f"pnpm add {base}/chainlit-react-client-0.5.0-rc.1.dev.1234.tgz" in body
+
+    info = rn.parse_build_info(_retarget(PR_INFO, "3.0.0rc1", "0.5.0-rc.1"))
+    body = rn.render_pr_comment(info, REPO, "success")
+    assert "`3.0.0rc1.dev1235+pr77.g0123456`" in body
+    assert "chainlit-react-client-0.5.0-rc.1.dev.1235.tgz" in body
+
+
+@pytest.fixture
+def stamped_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """scripts/ci_version.py and a git repository it can stamp."""
+    spec = importlib.util.spec_from_file_location(
+        "ci_version", _SCRIPT.with_name("ci_version.py")
+    )
+    assert spec
+    assert spec.loader
+    ci_version = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ci_version)
+
+    root = tmp_path / "repo"
+    for path, content in (
+        (ci_version.VERSION_FILE, '__version__ = "3.0.0"\n'),
+        (ci_version.CLIENT_PACKAGE_JSON, '{"version": "0.5.0"}\n'),
+    ):
+        (root / path).parent.mkdir(parents=True)
+        (root / path).write_text(content)
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    subprocess.run(
+        ["git", "init", "--quiet", "--initial-branch", "main"], cwd=root, check=True
+    )
+    return ci_version, root
+
+
+@pytest.mark.parametrize(
+    ("base", "client"),
+    [
+        ("3.0.0", "0.5.0"),
+        ("3.0.0rc1", "0.5.0-rc.1"),
+        ("2.0rc0", "0.5.0"),
+        ("2.7.1.1", "0.5.0-beta-2.x"),
+    ],
+)
+def test_build_info_of_ci_version_validates(
+    stamped_repo, tmp_path, capsys, base: str, client: str
+):
+    """End to end: what the build stamps is what both consumers accept."""
+    ci_version, root = stamped_repo
+    (root / ci_version.VERSION_FILE).write_text(f'__version__ = "{base}"\n')
+    (root / ci_version.CLIENT_PACKAGE_JSON).write_text(json.dumps({"version": client}))
+    builds = {
+        "release": ci_version.compute(
+            root,
+            event="push",
+            ref="refs/heads/main",
+            sha=SHA,
+            run_id="123456789",
+            number=1234,
+        ),
+        "pr": ci_version.compute(
+            root,
+            event="pull_request",
+            ref="refs/pull/77/merge",
+            sha=SHA,
+            run_id="987654321",
+            pr_number="77",
+            number=1235,
+        ),
+    }
+    assert builds["release"]["version"] == f"{base}.dev1234"
+    assert builds["pr"]["version"] == f"{base}.dev1235+pr77.g0123456"
+
+    for kind, info in builds.items():
+        path = _write(tmp_path, info)
+        other = "pr" if kind == "release" else "release"
+
+        code, out, err = _run(capsys, "validate", str(path), "--kind", kind)
+        assert (code, err) == (0, "")
+        fields = dict(line.split("=", 1) for line in out.splitlines())
+        assert fields["kind"] == kind
+        assert fields["version"] == info["version"]
+        assert fields["base_version"] == base
+        assert fields["client_version"] == info["client_version"]
+        assert fields["wheel"] == info["files"]["wheel"]
+        assert fields["react_client"] == info["files"]["react_client"]
+
+        assert _run(capsys, "validate", str(path), "--kind", other)[0] == 1
+
+    release = rn.render_release(rn.parse_build_info(builds["release"]), REPO)
+    assert builds["release"]["files"]["wheel"] in release
+    comment = rn.render_pr_comment(rn.parse_build_info(builds["pr"]), REPO, "success")
+    assert builds["pr"]["files"]["react_client"] in comment
+
+
+# Digits that are not ASCII: Arabic-Indic three and fullwidth three.
+ARABIC_3 = "\u0663"
+FULLWIDTH_3 = "\uff13"
+
 MALICIOUS = [
+    # --- non-ASCII digits, which \d, str.isdigit() and int() all accept ---
+    *(
+        _retarget(info, f"{prefix}{digit}.0.0", "0.5.0")
+        for info in (MAIN_INFO, PR_INFO)
+        for digit in (ARABIC_3, FULLWIDTH_3)
+        for prefix in ("", "1")
+    ),
+    *(
+        _with(
+            MAIN_INFO,
+            base_version=f"3.0.0rc{digit}",
+            version=f"3.0.0rc{digit}.dev1234",
+            files_wheel=f"chainlit-3.0.0rc{digit}.dev1234-py3-none-any.whl",
+            files_sdist=f"chainlit-3.0.0rc{digit}.dev1234.tar.gz",
+        )
+        for digit in (ARABIC_3, FULLWIDTH_3)
+    ),
+    *(
+        _with(
+            MAIN_INFO,
+            version=f"3.0.0.dev12{digit}4",
+            files_wheel=f"chainlit-3.0.0.dev12{digit}4-py3-none-any.whl",
+            files_sdist=f"chainlit-3.0.0.dev12{digit}4.tar.gz",
+        )
+        for digit in (ARABIC_3, FULLWIDTH_3)
+    ),
+    *(
+        _with(
+            MAIN_INFO,
+            client_version=client,
+            files_react_client=f"chainlit-react-client-{client}.tgz",
+        )
+        for digit in (ARABIC_3, FULLWIDTH_3)
+        for client in (
+            f"0.5.{digit}-dev.1234",
+            f"0.5.0-dev.12{digit}4",
+            f"0.5.0-rc.{digit}.dev.1234",
+            f"0.5.0-rc{digit}.dev.1234",
+        )
+    ),
+    *(_with(MAIN_INFO, run_id=f"12345678{digit}") for digit in (ARABIC_3, FULLWIDTH_3)),
+    *(_with(MAIN_INFO, run_id=digit) for digit in (ARABIC_3, FULLWIDTH_3)),
+    *(
+        _with(
+            PR_INFO,
+            version=f"3.0.0.dev1235+{local}",
+            files_wheel=f"chainlit-3.0.0.dev1235+{local}-py3-none-any.whl",
+            files_sdist=f"chainlit-3.0.0.dev1235+{local}.tar.gz",
+        )
+        for local in (
+            "pr\u0667\u0667.g0123456",
+            "pr\uff17\uff17.g0123456",
+            "pr7\u0667.g0123456",
+            "pr77.g012345\u0666",
+            "pr77.g\uff10123456",
+        )
+    ),
+    # --- base versions that scripts/ci_version.py does not accept either ---
+    *(
+        _with(
+            MAIN_INFO,
+            base_version=base,
+            version=f"{base}.dev1234",
+            files_wheel=f"chainlit-{base}.dev1234-py3-none-any.whl",
+            files_sdist=f"chainlit-{base}.dev1234.tar.gz",
+        )
+        for base in (
+            "3",
+            "3.0.0.0.0",
+            "03.0.0",
+            "3.0.0-rc",
+            "3.0.0-rc1",
+            "3.0.0.rc1",
+            "3.0.0rc",
+            "3.0.0rc01",
+            "3.0.0RC1",
+            "3.0.0c1",
+            "3.0.0rc1.dev5",
+            "3.0.0.dev5",
+            "3.0.0.post1",
+            "3.0.0rc1+local",
+            "1!3.0.0",
+            "3.0.0rc1\n",
+            "3.0.01234567",
+        )
+    ),
+    # --- client versions that scripts/ci_version.py does not produce ---
+    *(
+        _with(
+            MAIN_INFO,
+            client_version=client,
+            files_react_client=f"chainlit-react-client-{client}.tgz",
+        )
+        for client in (
+            "0.5.0-rc.1",
+            "0.5.0-rc.1.dev",
+            "0.5.0-rc.1-dev.1234",
+            "0.5.0-rc..dev.1234",
+            "0.5.0-rc.01.dev.1234",
+            "0.5.0-rc_1.dev.1234",
+            "0.5.0-dev.1.dev.1234",
+            "0.5.0-rc.dev.dev.1234",
+            "0.5.0-dev.1234.5",
+            "0.5.0-dev.01234",
+            "0.5.0.dev.1234",
+            "0.5-dev.1234",
+            # Not the build number of this build.
+            "0.5.0-dev.1235",
+            "0.5.0-rc.1.dev.1235",
+            "0.5.0-dev.1234\n",
+        )
+    ),
     # --- Markdown / HTML injection through the version ---
     _with(MAIN_INFO, version=f"3.0.0.dev1234{EVIL}"),
     _with(MAIN_INFO, version="3.0.0.dev1234`\n\n# pwned\n[x](https://evil.example)"),

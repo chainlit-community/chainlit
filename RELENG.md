@@ -27,7 +27,7 @@ This document outlines the steps for maintainers to create a new release of the 
    - Input the new version number as the tag (e.g. 4.0.4).
    - Use the "Generate release notes" button to auto-populate the release notes from the changelog.
    - Review the release notes, make any needed edits for clarity.
-   - If this is a full release after an RC, remove any "-rc" suffix from the version number.
+   - If this is a full release after an RC, remove the `rcN` suffix from the version number.
    - Publish the release.
 
 5. **Update any associated documentation and examples**:
@@ -41,7 +41,8 @@ This document outlines the steps for maintainers to create a new release of the 
 ## RC (Release Candidate) Releases
 
 - We create RC releases to allow testing before a full stable release
-- Append "-rc" to the version number (e.g. 4.0.4-rc)
+- Append `rcN` to the version number, in the PEP 440 form used by the existing tags such as `2.4.0rc0` (e.g. `3.0.0rc1`, not `3.0.0-rc`). The build validates the version in `backend/chainlit/version.py` and fails on any other spelling.
+- Between RCs, bump `main` to the next RC (e.g. `3.0.0rc2`), not to the final version: under PEP 440 `3.0.0.dev1234` sorts below `3.0.0rc1`.
 - Normally only bug fixes, no new features, between an RC and the final release version
 
 ## Preview builds
@@ -67,6 +68,8 @@ The E2E tests install that wheel instead of building their own, so they test the
 | react-client | `<package.json version>-dev.<N>`   | `0.5.0-dev.1234`              |
 
 Under PEP 440, `3.0.0.dev1234` sorts above `2.12.0` and below `3.0.0`, so a preview build is never mistaken for the release it precedes.
+
+The same holds while `version.py` holds a release candidate: `3.0.0rc1` builds as `3.0.0rc1.dev1234`, which sorts below `3.0.0rc1`. A react-client pre-release gets `.dev.<N>` appended instead, e.g. `0.5.0-rc.1.dev.1234`.
 
 **Pull requests.** When CI finishes on a pull request, `.github/workflows/pr-build-comment.yaml` posts (or updates) one comment on the PR with the build version and the commands to download the `dist` artifact and install the wheel. Workflow artifacts need a GitHub login to download, and they expire.
 
