@@ -35,3 +35,4 @@ Test coverage is required:
 - [ ] Backend changes are covered by unit tests, and frontend changes by E2E tests.
 - [ ] A bug fix comes with a regression test.
 - [ ] The change is backward compatible, or it is a feature reduction that says who is affected and how to migrate.
+- [ ] User-visible changes have an entry under `## [Unreleased]` in `CHANGELOG.md` (breaking ones start with `**Breaking:**`), or a maintainer labelled this pull request `no changelog`.
