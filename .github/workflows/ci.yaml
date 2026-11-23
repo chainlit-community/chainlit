@@ -2,6 +2,17 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      # Set by publish.yaml only: build an official release instead of a
+      # preview build. scripts/ci_version.py holds the rules.
+      release_version:
+        description: Exact version of the official release to build, e.g. 3.0.0rc1.
+        type: string
+        default: ''
+      index:
+        description: Package index the release is for (testpypi or pypi).
+        type: string
+        default: ''
   workflow_dispatch:
   merge_group:
   pull_request:
@@ -31,6 +42,9 @@ jobs:
     secrets: inherit
   build:
     uses: ./.github/workflows/build.yaml
+    with:
+      release_version: ${{ inputs.release_version }}
+      index: ${{ inputs.index }}
   e2e-tests:
     # Tests the wheel from the `dist` artifact uploaded by the build job.
     needs: [build]
@@ -38,11 +52,15 @@ jobs:
     secrets: inherit
   attest:
     # Build provenance for the distributions that preview-release.yaml
-    # publishes. It is signed here, in the run that built them, so that it
-    # names the commit they were built from. Only for builds of main that
-    # passed every check; this job never runs build code.
+    # and publish.yaml publish. It is signed here, in the run that built
+    # them, so that it names the commit they were built from. Only for builds
+    # that passed every check and get published: pushes to main (previews) and
+    # official releases for PyPI. This job never runs build code.
     name: Attest build provenance
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'chainlit-community/chainlit'
+    if: >-
+      github.repository == 'chainlit-community/chainlit' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || (inputs.release_version != '' && inputs.index == 'pypi'))
     needs: [check-backend, check-frontend, tests, build, e2e-tests]
     runs-on: ubuntu-latest
     permissions:

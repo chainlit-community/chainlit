@@ -155,6 +155,17 @@ class TestElementBase:
             assert element.name == "test_image"
             assert element.type == "image"
 
+    async def test_element_from_dict_keeps_bytes_content(self, mock_chainlit_context):
+        """Element.from_dict() must not stringify bytes content to "b'...'"."""
+        async with mock_chainlit_context:
+            payload = b"\x89PNG\r\n\x1a\n"
+
+            element = Element.from_dict(
+                {"name": "img", "type": "image", "content": payload}
+            )
+
+            assert element.content == payload
+
     async def test_element_infer_type_from_mime(self):
         """Test Element.infer_type_from_mime() method."""
         assert Element.infer_type_from_mime("image/png") == "image"

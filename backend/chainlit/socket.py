@@ -226,7 +226,15 @@ async def connection_successful(sid):
         return
 
     if context.session.thread_id_to_resume and config.code.on_chat_resume:
-        thread = await resume_thread(context.session)
+        try:
+            thread = await resume_thread(context.session)
+        except Exception:
+            logger.exception("Failed to resume thread")
+            await context.emitter.send_resume_thread_error(
+                "Failed to load conversation history."
+            )
+            return
+
         if thread:
             context.session.has_first_interaction = True
             await context.emitter.emit(
@@ -236,10 +244,19 @@ async def connection_successful(sid):
             await config.code.on_chat_resume(thread)
 
             for step in thread.get("steps", []):
-                if "message" in step["type"]:
-                    chat_context.add(Message.from_dict(step))
+                try:
+                    if "message" in step["type"]:
+                        chat_context.add(Message.from_dict(step))
+                except Exception as e:
+                    logger.warning(f"Failed to restore step {step.get('id')}: {e!s}")
 
-            await context.emitter.resume_thread(thread)
+            try:
+                await context.emitter.resume_thread(thread)
+            except Exception:
+                logger.exception("Failed to emit resume_thread")
+                await context.emitter.send_resume_thread_error(
+                    "Failed to load conversation history."
+                )
             return
         else:
             await context.emitter.send_resume_thread_error("Thread not found.")
@@ -266,29 +283,32 @@ async def disconnect(sid):
 
     init_ws_context(session)
 
-    if config.code.on_chat_end:
-        await config.code.on_chat_end()
-
-    if session.thread_id and session.has_first_interaction:
-        await persist_user_session(session.thread_id, session.to_persistable())
-
     async def clear(_sid):
         if session := WebsocketSession.get(_sid):
             # Clean up the user session
             if session.id in user_sessions:
                 user_sessions.pop(session.id)
+            # Clean up the chat context
+            chat_context.delete_session(session.id)
             # Clean up the session
             await session.delete()
 
-    if session.to_clear:
-        await clear(sid)
-    else:
+    try:
+        if config.code.on_chat_end:
+            await config.code.on_chat_end()
 
-        async def clear_on_timeout(_sid):
-            await asyncio.sleep(config.project.session_timeout)
-            await clear(_sid)
+        if session.thread_id and session.has_first_interaction:
+            await persist_user_session(session.thread_id, session.to_persistable())
+    finally:
+        if session.to_clear:
+            await clear(sid)
+        else:
 
-        asyncio.ensure_future(clear_on_timeout(sid))
+            async def clear_on_timeout(_sid):
+                await asyncio.sleep(config.project.session_timeout)
+                await clear(_sid)
+
+            asyncio.ensure_future(clear_on_timeout(sid))
 
 
 @sio.on("stop")  # pyright: ignore [reportOptionalCall]

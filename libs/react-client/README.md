@@ -4,15 +4,11 @@ The `@chainlit/react-client` package provides a set of React hooks as well as an
 
 ## Installation
 
-To install the package, run the following command in your project directory:
+The community fork does not publish this package to npm yet. `npm install @chainlit/react-client` installs the last version published by the original project, without the changes made in this fork.
 
-```sh
-npm install @chainlit/react-client
-```
+### From GitHub releases
 
-### Preview builds
-
-Preview builds of this package are not published to npm. Each [pre-release on GitHub](https://github.com/chainlit-community/chainlit/releases) of the community fork includes a tarball, which you can install by URL. Replace `<version>` with the release tag (e.g. `3.0.0.dev1234`) and `<client-version>` with the version in the tarball's file name (e.g. `0.6.0-dev.1234`); the release notes have the exact commands.
+Every [release on GitHub](https://github.com/chainlit-community/chainlit/releases) of the community fork, official versions and preview builds alike, includes a tarball of this package, which you can install by URL. Replace `<version>` with the release tag (e.g. `3.0.0`, or `3.0.0.dev1234` for a preview build) and `<client-version>` with the version in the tarball's file name; the release notes have the exact commands. That version always has the form `<package.json version>-dev.<N>` (e.g. `0.6.0-dev.1234`, so `chainlit-react-client-0.6.0-dev.1234.tgz`), for official versions as well as preview builds: clean versions such as `0.6.0` will come with publication to npm.
 
 ```sh
 # npm

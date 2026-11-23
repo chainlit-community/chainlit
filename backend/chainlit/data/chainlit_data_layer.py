@@ -275,10 +275,10 @@ class ChainlitDataLayer(BaseDataLayer):
             id=str(row["id"]),
             threadId=str(row["threadId"]),
             type=metadata.get("type", "file"),
-            url=str(row["url"]),
+            url=row.get("url"),
             name=str(row["name"]),
-            mime=str(row["mime"]),
-            objectKey=str(row["objectKey"]),
+            mime=row.get("mime"),
+            objectKey=row.get("objectKey"),
             forId=str(row["stepId"]),
             chainlitKey=row.get("chainlitKey"),
             display=row["display"],
@@ -553,9 +553,16 @@ class ChainlitDataLayer(BaseDataLayer):
         if self.storage_client is not None:
             for elem in elements_results:
                 if not elem["url"] and elem["objectKey"]:
-                    elem["url"] = await self.storage_client.get_read_url(
-                        object_key=elem["objectKey"],
-                    )
+                    try:
+                        elem["url"] = await self.storage_client.get_read_url(
+                            object_key=elem["objectKey"],
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to get read URL for element '%s': %s",
+                            elem.get("id", "unknown"),
+                            e,
+                        )
 
         return ThreadDict(
             id=str(thread["id"]),
