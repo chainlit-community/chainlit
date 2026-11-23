@@ -6,6 +6,18 @@ name: Build
 
 on:
   workflow_call:
+    inputs:
+      release_version:
+        description: >-
+          Build the official release with exactly this version (3.0.0rc1,
+          3.0.0) instead of a preview build. Only for workflow_dispatch runs;
+          scripts/ci_version.py holds the rules.
+        type: string
+        default: ''
+      index:
+        description: Package index the release is for (testpypi or pypi). Required with release_version.
+        type: string
+        default: ''
     outputs:
       version:
         description: Version stamped on the Python distributions, e.g. 3.0.0.dev1234.
@@ -43,6 +55,9 @@ jobs:
           # For pull requests github.sha is the temporary merge commit; record
           # the PR head instead, which is what reviewers and workflow_run see.
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Both empty except for an official release (see publish.yaml).
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          PUBLISH_INDEX: ${{ inputs.index }}
         run: python scripts/ci_version.py stamp --write --build-info dist/build-info.json --sha "$HEAD_SHA"
       - name: Build Python distributions
         # Runs the JS build (frontend, copilot, react-client) through backend/build.py.
@@ -53,18 +68,20 @@ jobs:
         working-directory: libs/react-client
       - name: Check frontend and copilot folder included
         run: |
-          unzip -q dist/chainlit-*.whl -d "$RUNNER_TEMP/unpacked"
+          unzip -q dist/chainlit_community-*.whl -d "$RUNNER_TEMP/unpacked"
           ls "$RUNNER_TEMP/unpacked/chainlit/frontend/dist"
           ls "$RUNNER_TEMP/unpacked/chainlit/copilot/dist"
       - name: Check the wheel installs and reports the stamped version
         env:
           VERSION: ${{ steps.stamp.outputs.version }}
         run: |
-          uv pip install --no-deps dist/chainlit-*.whl
-          installed="$(uv run --no-sync python -c 'from importlib.metadata import version; print(version("chainlit"))')"
-          echo "Installed chainlit $installed"
+          uv pip install --no-deps dist/chainlit_community-*.whl
+          # The distribution is chainlit-community; the import package and the
+          # command are chainlit.
+          installed="$(uv run --no-sync python -c 'from importlib.metadata import version; print(version("chainlit-community"))')"
+          echo "Installed chainlit-community $installed"
           test "$installed" = "$VERSION"
-          uv run --no-sync chainlit --version
+          uv run --no-sync chainlit --version | grep -Fx "Chainlit, version $VERSION"
       - name: Write checksums
         run: |
           python scripts/ci_version.py finalize --dist dist
