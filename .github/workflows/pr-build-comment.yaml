@@ -1,0 +1,139 @@
+name: PR build comment
+
+# Posts (or updates) one comment on a pull request that points at the `dist`
+# artifact built by the CI run of that pull request.
+#
+# SECURITY: `workflow_run` runs in the context of the base repository with a
+# write token, while the triggering CI run may come from a fork. Therefore this
+# workflow
+#   - never checks out or executes code from the pull request: only `scripts/`
+#     of the default branch is checked out;
+#   - reads a single file (build-info.json) from the artifact and treats it as
+#     untrusted data: scripts/release_notes.py validates every field before
+#     anything is rendered;
+#   - takes the pull request number from that file, but only uses it after the
+#     API confirmed that the head of that pull request is the commit CI ran on.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: pr-build-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    name: Comment build artifact on PR
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-slim
+    defaults:
+      run:
+        shell: bash # explicit, so that `-o pipefail` is set
+    permissions:
+      actions: read # list and download the artifact of the CI run
+      contents: read # check out scripts/ of the default branch
+      pull-requests: write # create or update the comment
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      MARKER: '<!-- chainlit-build-artifact -->'
+    steps:
+      # No `ref`: for workflow_run this is the default branch, never PR code.
+      - name: Check out scripts/ of the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Fetch build-info.json from the CI run
+        id: artifact
+        run: |
+          artifact="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?name=dist" \
+            --jq '[.artifacts[] | select(.expired | not)] | first // empty | "\(.id) \(.size_in_bytes)"')"
+          if [[ -z "$artifact" ]]; then
+            echo "CI run $RUN_ID has no 'dist' artifact (the build did not finish); nothing to comment."
+            exit 0
+          fi
+          read -r artifact_id size <<<"$artifact"
+          if ((size > 1024 * 1024 * 1024)); then
+            echo "::warning::The 'dist' artifact of run $RUN_ID is unexpectedly large; skipping."
+            exit 0
+          fi
+          gh api "repos/$GH_REPO/actions/artifacts/$artifact_id/zip" >"$RUNNER_TEMP/dist.zip"
+          # Extract nothing but (at most 64 KiB + 1 byte of) build-info.json.
+          python3 -I - "$RUNNER_TEMP/dist.zip" "$RUNNER_TEMP/build-info.json" <<'PY'
+          import sys
+          import zipfile
+
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              with archive.open("build-info.json") as member:
+                  data = member.read(64 * 1024 + 1)
+          with open(sys.argv[2], "wb") as out:
+              out.write(data)
+          PY
+          echo "id=$artifact_id" >>"$GITHUB_OUTPUT"
+
+      - name: Validate build-info.json and resolve the pull request
+        id: pr
+        if: steps.artifact.outputs.id != ''
+        run: |
+          fields="$(python3 -I scripts/release_notes.py validate "$RUNNER_TEMP/build-info.json" \
+            --kind pr --expect-run-id "$RUN_ID" --expect-sha "$HEAD_SHA")"
+          pr_number="$(sed -n 's/^pr_number=//p' <<<"$fields")"
+
+          # `workflow_run.pull_requests` is empty for fork PRs, so the number
+          # comes from the (validated, but untrusted) build-info.json. Trust it
+          # only if that PR is open, targets this repository and its head is
+          # exactly the commit and repository the CI run was triggered for.
+          if ! pr="$(gh api "repos/$GH_REPO/pulls/$pr_number" \
+            --jq '[.state, .head.sha, .base.repo.full_name, (.head.repo.full_name // "")] | @tsv')"; then
+            echo "::warning::Could not look up pull request #$pr_number; skipping."
+            exit 0
+          fi
+          IFS=$'\t' read -r state head_sha base_repo head_repo <<<"$pr"
+          if [[ "$state" != "open" ]]; then
+            echo "Pull request #$pr_number is not open; skipping."
+          elif [[ "$head_sha" != "$HEAD_SHA" ]]; then
+            echo "Pull request #$pr_number has moved on from the commit of run $RUN_ID; skipping."
+          elif [[ "$base_repo" != "$GH_REPO" || "$head_repo" != "$HEAD_REPO" ]]; then
+            echo "::warning::Pull request #$pr_number does not belong to run $RUN_ID; skipping."
+          else
+            echo "number=$pr_number" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update the comment
+        if: steps.pr.outputs.number != ''
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          ARTIFACT_ID: ${{ steps.artifact.outputs.id }}
+        run: |
+          python3 -I scripts/release_notes.py pr-comment "$RUNNER_TEMP/build-info.json" \
+            --repo "$GH_REPO" \
+            --conclusion "$CONCLUSION" \
+            --expect-run-id "$RUN_ID" \
+            --expect-pr "$PR_NUMBER" \
+            --head-sha "$HEAD_SHA" \
+            --artifact-url "https://github.com/$GH_REPO/actions/runs/$RUN_ID/artifacts/$ARTIFACT_ID" \
+            >"$RUNNER_TEMP/comment.md"
+          [[ "$(head -n 1 "$RUNNER_TEMP/comment.md")" == "$MARKER" ]]
+
+          # The one comment to update: ours (marker) AND written by this bot.
+          comment_id="$(gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" |
+            jq -r --arg marker "$MARKER" \
+              '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith($marker))) | .id' |
+            sed -n 1p)"
+          if [[ -n "$comment_id" ]]; then
+            gh api --silent -X PATCH "repos/$GH_REPO/issues/comments/$comment_id" -F "body=@$RUNNER_TEMP/comment.md"
+            echo "Updated comment $comment_id on pull request #$PR_NUMBER."
+          else
+            gh api --silent -X POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md"
+            echo "Created the comment on pull request #$PR_NUMBER."
+          fi

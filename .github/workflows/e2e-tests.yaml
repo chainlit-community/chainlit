@@ -61,13 +61,27 @@ jobs:
         run: pnpm exec cypress verify
         shell: bash
       - uses: ./.github/actions/uv-python-install
-        name: Install Python, uv and Python & pnpm (uv does it automatically) dependencies
+        name: Install Python, uv and Python dependencies
         with:
           working-directory: ${{ env.BACKEND_DIR }}
-          uv-args: --extra tests
+          # Dependencies only: chainlit itself comes from the wheel below, so
+          # the frontend is not rebuilt in every shard.
+          uv-args: --no-install-workspace --extra tests
+      - name: Download the distributions built for this run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Install the chainlit wheel
+        run: uv pip install --no-deps dist/chainlit-*.whl
+        shell: bash
       - name: Run tests
         env:
           CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+          # cypress/support/run.ts starts the app with `uv run`; without this
+          # uv would sync the environment first, replacing the wheel with an
+          # editable install of the source tree (and building the frontend).
+          UV_NO_SYNC: 1
           SPLIT: ${{ inputs.e2e_parallel_shards }}
           SPLIT_INDEX1: ${{ matrix.containers }}
         run: pnpm test:e2e

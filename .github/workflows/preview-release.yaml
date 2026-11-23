@@ -1,0 +1,190 @@
+name: Preview release
+
+# Publishes the `dist` artifact of a successful CI run on `main` as a GitHub
+# pre-release tagged with the bare build version (e.g. 3.0.0.dev1234).
+#
+# Nothing is built here: the files CI built and tested are published as they
+# are, after their checksums were verified.
+#
+# Releases created with GITHUB_TOKEN do not trigger other workflows, so
+# publish.yaml and publish-libs.yaml (`on: release: published`) do NOT run for
+# these pre-releases: nothing is published to PyPI or npm.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'ID of a successful CI run for a push to main to (re)publish'
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  release:
+    name: Publish preview release
+    # Only the canonical repository publishes (not forks), only from the
+    # default branch's version of this workflow, and only builds of pushes to
+    # main (a fork PR from a branch called `main` also has head_branch == main).
+    if: >-
+      github.repository == 'chainlit-community/chainlit' &&
+      github.ref == 'refs/heads/main' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main'
+        )
+      )
+    runs-on: ubuntu-slim
+    defaults:
+      run:
+        shell: bash # explicit, so that `-o pipefail` is set
+    # Job level, so that skipped runs never take a slot in the group.
+    concurrency:
+      group: preview-release
+      cancel-in-progress: false
+    permissions:
+      actions: read # read the CI run and download its artifact
+      contents: write # create the tag and the release
+      id-token: write # Sigstore signing certificate for the attestation
+      attestations: write # store the attestation
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.run_id || github.event.workflow_run.id }}
+    steps:
+      # Same checks for both triggers; they are what makes workflow_dispatch safe.
+      - name: Verify the CI run
+        id: run
+        run: |
+          if [[ ! "$RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]; then
+            echo "::error::run_id must be a number."
+            exit 1
+          fi
+          run="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID" \
+            --jq '[.path, .event, .head_branch, .status, (.conclusion // ""), .repository.full_name, (.head_repository.full_name // ""), .head_sha] | @tsv')"
+          IFS=$'\t' read -r path event branch status conclusion repo head_repo head_sha <<<"$run"
+          expected=".github/workflows/ci.yaml"$'\t'"push"$'\t'"main"$'\t'"completed"$'\t'"success"$'\t'"$GH_REPO"$'\t'"$GH_REPO"
+          actual="$path"$'\t'"$event"$'\t'"$branch"$'\t'"$status"$'\t'"$conclusion"$'\t'"$repo"$'\t'"$head_repo"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Run $RUN_ID is not a successful CI run for a push to main of $GH_REPO."
+            exit 1
+          fi
+          if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Run $RUN_ID has no usable head SHA."
+            exit 1
+          fi
+          echo "head_sha=$head_sha" >>"$GITHUB_OUTPUT"
+
+      - name: Check out scripts/ of the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Download the dist artifact of the CI run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: ${{ runner.temp }}/dist
+          run-id: ${{ env.RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Validate build-info.json and verify checksums
+        id: info
+        env:
+          HEAD_SHA: ${{ steps.run.outputs.head_sha }}
+        run: |
+          # --kind release: version <base>.dev<N> without a local part, event
+          # push, ref refs/heads/main; file names derived from the version.
+          fields="$(python3 -I scripts/release_notes.py validate "$RUNNER_TEMP/dist/build-info.json" \
+            --kind release --expect-sha "$HEAD_SHA" --expect-run-id "$RUN_ID")"
+          echo "$fields" | tee -a "$GITHUB_OUTPUT"
+
+          # SHA256SUMS must be well formed and list exactly the three assets.
+          cd "$RUNNER_TEMP/dist"
+          if grep -Evq '^[0-9a-f]{64} [ *][A-Za-z0-9._+-]+$' SHA256SUMS; then
+            echo "::error::SHA256SUMS is malformed."
+            exit 1
+          fi
+          listed="$(cut -c67- SHA256SUMS | LC_ALL=C sort)"
+          expected="$(sed -n 's/^\(wheel\|sdist\|react_client\)=//p' <<<"$fields" | LC_ALL=C sort)"
+          if [[ "$listed" != "$expected" || "$(wc -l <SHA256SUMS)" -ne 3 ]]; then
+            echo "::error::SHA256SUMS does not cover exactly the wheel, the sdist and the react-client tarball."
+            exit 1
+          fi
+          sha256sum --strict -c SHA256SUMS
+
+      - name: Skip if this version is already released
+        id: existing
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+        run: |
+          if gh api --silent "repos/$GH_REPO/releases/tags/$VERSION" 2>/dev/null; then
+            echo "Release $VERSION already exists; nothing to do."
+            echo "exists=true" >>"$GITHUB_OUTPUT"
+          elif gh api --silent "repos/$GH_REPO/git/ref/tags/$VERSION" 2>/dev/null; then
+            echo "::warning::Tag $VERSION already exists without a release; not publishing."
+            echo "exists=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      # One attestation whose subjects are exactly the files in SHA256SUMS.
+      - name: Attest build provenance
+        if: steps.existing.outputs.exists == 'false'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/dist/SHA256SUMS
+
+      - name: Write the release notes
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+          SHA: ${{ steps.info.outputs.sha }}
+        run: |
+          notes="$RUNNER_TEMP/notes.md"
+          python3 -I scripts/release_notes.py release "$RUNNER_TEMP/dist/build-info.json" \
+            --repo "$GH_REPO" --expect-sha "$SHA" --expect-run-id "$RUN_ID" >"$notes"
+
+          # Append GitHub's changelog since the previous preview release (the
+          # API lists releases newest first). The first preview release has
+          # none; a failure here must not block the release either.
+          previous="$(gh api "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select((.draft | not) and (.tag_name | test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.dev[0-9]+$"))) | .tag_name' |
+            sed -n 1p)"
+          if [[ -z "$previous" ]]; then
+            echo "No previous preview release; publishing without a changelog."
+          elif gh api -X POST "repos/$GH_REPO/releases/generate-notes" \
+            -f "tag_name=$VERSION" -f "target_commitish=$SHA" -f "previous_tag_name=$previous" \
+            --jq .body >"$RUNNER_TEMP/changelog.md"; then
+            # Stay well below the 125000 character limit of a release body.
+            { echo; head -c 100000 "$RUNNER_TEMP/changelog.md"; echo; } >>"$notes"
+          else
+            echo "::warning::Could not generate the changelog since $previous; publishing without it."
+          fi
+
+      - name: Create the pre-release
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+          SHA: ${{ steps.info.outputs.sha }}
+          WHEEL: ${{ steps.info.outputs.wheel }}
+          SDIST: ${{ steps.info.outputs.sdist }}
+          REACT_CLIENT: ${{ steps.info.outputs.react_client }}
+        working-directory: ${{ runner.temp }}/dist
+        run: |
+          # --latest=false: a preview must never become the "Latest" release.
+          gh release create "$VERSION" \
+            --target "$SHA" \
+            --prerelease \
+            --latest=false \
+            --title "Preview build $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "$WHEEL" "$SDIST" "$REACT_CLIENT" SHA256SUMS

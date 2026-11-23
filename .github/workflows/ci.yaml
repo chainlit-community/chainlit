@@ -25,14 +25,18 @@ jobs:
   tests:
     uses: ./.github/workflows/tests.yaml
     secrets: inherit
+  build:
+    uses: ./.github/workflows/build.yaml
   e2e-tests:
+    # Tests the wheel from the `dist` artifact uploaded by the build job.
+    needs: [build]
     uses: ./.github/workflows/e2e-tests.yaml
     secrets: inherit
   ci:
     runs-on: ubuntu-slim
     name: Run CI
     if: always() # This ensures the job always runs
-    needs: [check-backend, check-frontend, tests, e2e-tests]
+    needs: [check-backend, check-frontend, tests, build, e2e-tests]
     steps:
       # Propagate failure
       - name: Check dependent jobs
