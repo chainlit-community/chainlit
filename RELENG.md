@@ -58,7 +58,7 @@ Pre-releases need no commits and no pull request. Between an RC and the final ve
 ## Publish a final release
 
 1. **Open the release PR.** It contains:
-   - `CHANGELOG.md`: the entries of `[Unreleased]` moved into a new `## [<V>] - <date>` section, breaking changes marked clearly. Leave an empty `## [Unreleased]` heading in place.
+   - `CHANGELOG.md`: the entries of `[Unreleased]` moved into a new `## [<V>] - <date>` section, breaking changes marked clearly. Leave an empty `## [Unreleased]` heading in place. First check `git log <previous version>..HEAD` for user-visible changes that have no entry yet.
    - `docs/releases/<V>.md`: the upgrade guide. An AI agent drafts it from the changelog and the commits since the last final release; a maintainer verifies it and removes the draft marker. See [docs/releases/README.md](docs/releases/README.md) for the required structure and the checklist.
    - If the version in `version.py` is not the one you are releasing (e.g. a breaking change was merged since the last bump), the corrected version.
    - `version` in `libs/*/package.json`, if those packages changed and the version was not bumped yet.

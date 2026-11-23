@@ -100,6 +100,7 @@ uv run scripts/format.py --check
 ### CI Requirements
 
 - **ALWAYS** run `pnpm lint` and `pnpm format-check` before committing or the CI (.github/workflows/ci.yaml) will fail.
+- **ALWAYS** follow the Changelog rule in `AGENTS.md`: user-visible changes need an entry under `## [Unreleased]` in `CHANGELOG.md`, or the CI (.github/workflows/changelog.yaml) will fail.
 - The CI runs: pytest, lint-backend, lint-ui, and e2e-tests.
 - **NEVER CANCEL** any CI commands - they take time but must complete.
 

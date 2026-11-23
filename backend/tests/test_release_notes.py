@@ -1526,8 +1526,9 @@ def test_changelog_parsers_agree_on_the_real_changelog(stamped_repo):
             assert section is not None
             assert not section.startswith("## ")
     # Sections do not run into each other.
-    assert "## [2.12.0]" not in (rn.changelog_section(text, "Unreleased") or "")
-    assert rn.changelog_section(text, "Unreleased")
+    # [Unreleased] is empty between a release PR and the next change, so only
+    # check that it does not swallow the section that follows it.
+    assert "## [" not in (rn.changelog_section(text, "Unreleased") or "")
     assert "CVE-2026-45018" in (rn.changelog_section(text, "2.12.0") or "")
     assert "## [2.11.1]" not in (rn.changelog_section(text, "2.12.0") or "")
 

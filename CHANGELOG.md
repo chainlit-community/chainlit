@@ -6,12 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-23
+
 ### Added
 
 - Preview builds. Every commit on `main` that passes CI is published as a pre-release on [GitHub Releases](https://github.com/chainlit-community/chainlit/releases), versioned `<next version>.dev<N>` (e.g. `3.0.0.dev1234`), with the wheel, the sdist, the `@chainlit/react-client` tarball, `SHA256SUMS` and build provenance attestations. The wheel includes the built frontend, so it installs by URL without Node or pnpm; see [Installation](README.md#installation). Preview builds are not published to PyPI or npm.
 - Every pull request gets a downloadable build of the same files as a workflow artifact, with a comment on the pull request explaining how to install it.
-- Official versions are published by hand with a single workflow, `.github/workflows/publish.yaml`: to PyPI with trusted publishing (no API tokens, gated by the reviewers of the `pypi` GitHub environment) and as a GitHub release with the wheel, the sdist, the `@chainlit/react-client` tarball, `SHA256SUMS` and build provenance attestations. The full CI, including the E2E tests, runs on exactly the files that are uploaded. Alphas, betas and release candidates (`3.0.0rc1`) need no commit, and a rehearsal can be run against TestPyPI. See [RELENG.md](RELENG.md).
-- Final releases come with a hand-checked upgrade guide in [`docs/releases/`](docs/releases/README.md), which is also the first part of the release notes.
+- Official versions are published to PyPI as `chainlit-community` and as GitHub releases, with checksums and build provenance attestations. Alphas, betas and release candidates are marked as pre-releases.
+- Final releases come with a hand-checked upgrade guide in [`docs/releases/`](https://github.com/chainlit-community/chainlit/tree/main/docs/releases), which is also the first part of the release notes.
 
 ### Changed
 
@@ -21,22 +23,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Replace `chainlit` by `chainlit-community` in `requirements.txt`, `pyproject.toml` and lock files, including extras: `chainlit[custom-data]` becomes `chainlit-community[custom-data]`.
   - Third-party packages that depend on `chainlit` still pull in the unmaintained original alongside `chainlit-community`; `pip show chainlit` shows whether it is installed and what requires it.
   - The files are now named `chainlit_community-<version>-py3-none-any.whl` and `chainlit_community-<version>.tar.gz`, for preview builds too. Update any URL or script that refers to `chainlit-<version>...`.
-- The version in `backend/chainlit/version.py` is now `3.0.0`, the next release, because breaking changes have already been merged. CI derives the version of each build from it.
 - `@chainlit/react-client` is now version `0.6.0`, the next release of the package, so that its preview builds (`0.6.0-dev.<N>`) sort above the `0.5.0` already on npm.
-
-- The generation and step types (`cl.ChatGeneration`, `cl.CompletionGeneration`, `cl.GenerationMessage`, ...) and the OpenAI / Mistral AI instrumentation behind `cl.instrument_openai()` / `cl.instrument_mistralai()` now live in Chainlit itself. The `literalai` package is no longer a dependency, and neither are its transitive dependencies (`traceloop-sdk`, `chevron`, the `opentelemetry-instrumentation-*` and OTLP exporter packages, `anthropic`, `grpcio`, `cuid`, `inflection`, `docstring-parser`). Apps that `import literalai` (or any of those packages) themselves must add it to their own dependencies.
+- **Breaking:** the generation and step types (`cl.ChatGeneration`, `cl.CompletionGeneration`, `cl.GenerationMessage`, ...) and the OpenAI / Mistral AI instrumentation behind `cl.instrument_openai()` / `cl.instrument_mistralai()` now live in Chainlit itself. The `literalai` package is no longer a dependency, and neither are its transitive dependencies (`traceloop-sdk`, `chevron`, the `opentelemetry-instrumentation-*` and OTLP exporter packages, `anthropic`, `grpcio`, `cuid`, `inflection`, `docstring-parser`). Apps that `import literalai` (or any of those packages) themselves must add it to their own dependencies.
 - `cl.ChatGeneration` / `cl.CompletionGeneration` are now Chainlit's own classes rather than aliases of the `literalai` ones, so `isinstance()` checks no longer match `literalai` generation objects. Their fields and serialised form are unchanged.
 - `literalai_*` keyword arguments (`literalai_tags`, `literalai_metadata`, ...) passed to instrumented OpenAI / Mistral AI calls are still accepted for backward compatibility. This might be removed in a future release, so stop passing them.
 - `cl.instrument_mistralai()` now raises `ModuleNotFoundError` instead of a generic `Exception` when `mistralai` is not installed.
+- **Breaking:** Chainlit now requires Python `>=3.11.5,<3.14.0` (was `>=3.10,<3.14.0`). Python 3.10 and 3.11.0 to 3.11.4 are no longer supported: `chainlit-community` does not install on those interpreters. Move to Python 3.11.5 or later before upgrading, including in base images and CI matrices.
+- `chainlit lint-translations` now exits with status 1 when a translation file in `.chainlit/translations` differs from the packaged `en-US.json` (a missing key, an extra key or a structure mismatch), and prints the number of differences. It used to print them and exit 0. Locale files copied into `.chainlit/translations` by earlier versions lack the new `chat.messages.actions.debug` key, so a CI step that runs the command reports them: add the missing keys to the files you customised, and delete the ones you did not, which are recreated from the packaged files on the next start.
+- The debug button's tooltip reads "Debug" instead of "Debug in Literal AI". Its text is the new translation key `chat.messages.actions.debug`, added to every packaged locale.
+- Building Chainlit from source requires Node.js 24 or later. Installing the wheel does not need Node.js.
+- The package summary shown on PyPI now says that this is the community maintenance fork of Chainlit.
 
 ### Fixed
 
 - `cl.instrument_mistralai()` no longer makes streaming calls (`chat.stream`, `fim.stream` and their `_async` variants) fail with `AttributeError` on mistralai 1.x releases that return `EventStream` objects.
 - `cl.instrument_openai()` no longer fails on responses without `usage` (some OpenAI-compatible servers omit it).
+- Resuming a thread no longer crashes on elements with Base64 (`bytes`) content: `Element.from_dict` keeps `bytes` content as bytes instead of its string representation.
+- With the built-in data layer, an element stored without a `url`, `mime` or `objectKey` comes back with `None` in that field instead of the string `"None"`.
+- A storage provider that fails to return a read URL for one element no longer aborts the whole thread resume, with the built-in and the DynamoDB data layers; a warning is logged instead. A message step that cannot be restored is skipped with a warning, and if the resume still fails the user sees "Failed to load conversation history."
+- `@chainlit/react-client`: on thread resume, elements with a `chainlitKey` but no `url` get their URL resolved, as elements received during a session already did, and `null` entries in the thread's elements are ignored.
+- The per-session chat context is removed with the session after a disconnect instead of staying in memory for the lifetime of the server. A failing `@cl.on_chat_end` callback, or a failure persisting the session, no longer skips the rest of the disconnect cleanup.
+- The chat profile selector and the message feedback buttons no longer crash with "Rendered fewer hooks than expected" when the number of chat profiles or the feedback setting changes between renders.
+- A `config.toml` whose `[meta]` section has no `generated_by` key now gives the intended "config file is outdated" error instead of a `TypeError`.
+- When `CHAINLIT_ROOT_PATH` is set, the auth cookies are set and cleared with that path. Its value used to be looked up as the name of another environment variable, so the path was always `/` and stale cookie chunks were not removed on logout or token refresh. `CHAINLIT_AUTH_COOKIE_PATH` now applies when the auth cookie is set, not only when it is cleared.
 
 ### Removed
 
 - **Breaking:** removed the LiteralAI data layer (`chainlit.data.literalai`, `LITERAL_API_KEY` / `LITERAL_API_URL` / `LITERAL_SERVER`). The service shut down on 2025-10-31. Migrate to the built-in data layer via `DATABASE_URL` or a custom `@cl.data_layer`.
+
+### Security
+
+- **Breaking:** fix a path traversal through the Socket.IO session id (CVE-2026-86099, GHSA-5q2m-cqhf-xw26). Connections whose `sessionId` is missing or does not match `[A-Za-z0-9_-]{1,128}` are now refused with `invalid session id`. The id was used unvalidated as a directory name under the session files directory, so a client could make the server write uploaded files into, or recursively delete, a directory outside it, or share another session's files directory. `@chainlit/react-client`, used by the bundled frontend and the copilot, sends UUIDs and is not affected; custom clients must send ids that match the pattern, for example a UUID.
+- **Breaking:** raised the minimum versions of runtime dependencies to releases that clear the known advisories against the previous minimums: `fastapi>=0.133.0` (was `>=0.116.1`), `starlette>=1.3.1` (was `>=0.47.2`), `python-socketio>=5.16.2` (was `>=5.11.0`), `mcp>=1.30.0` (was `>=1.28.1`), `python-dotenv>=1.2.2` (was `>=1.0.0`), `python-multipart>=0.0.31` (was `>=0.0.30`) and `pyjwt>=2.15.0` (was `>=2.13.0`). Upper bounds are unchanged. Environments that pin one of these below the new minimum can no longer install Chainlit; `starlette` moves from 0.x to 1.x, so apps that use FastAPI or Starlette directly should read their release notes. Python 3.11.0 to 3.11.4 are dropped for the same reason: the patched `soupsieve` requires 3.11.5.
+- The OAuth state is compared with the state cookie in constant time, and a callback without a state cookie is rejected.
 
 ## [2.12.0] - 2026-08-25
 

@@ -102,6 +102,15 @@ Examples:
 - `Co-Authored-By: GitHub Copilot <noreply@github.com>`
 - `Co-Authored-By: Gemini CLI <noreply@google.com>`
 
+### Changelog
+
+A pull request that changes what users install, run or see adds an entry to `## [Unreleased]` in `CHANGELOG.md` in the same pull request: anything under `backend/chainlit/`, `frontend/src/` or `libs/*/src/`, and the dependencies or `requires-python` in `backend/pyproject.toml`. CI checks this.
+
+- Use the Keep a Changelog headings (Added, Changed, Deprecated, Removed, Fixed, Security). Describe the effect for users, not the code.
+- Start the entry with `**Breaking:**` when an app, a deployment or a user's CI can observe the change and has to act. Say who is affected and what to do.
+- No relative links: the section is copied verbatim into the GitHub release notes. Use absolute URLs or none.
+- CI, tests, docs, tooling and lock-only dependency bumps get no entry. If a change under those paths is internal only (e.g. a pure refactor), say so in the pull request; a maintainer adds the `no changelog` label.
+
 ## Tech Stack
 
 | Layer                          | Stack                                                                                                                     |
