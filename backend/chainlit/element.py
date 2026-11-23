@@ -144,7 +144,11 @@ class Element:
         type = e_dict.get("type", "file")
         path = str(e_dict.get("path")) if e_dict.get("path") else None
         url = str(e_dict.get("url")) if e_dict.get("url") else None
-        content = str(e_dict.get("content")) if e_dict.get("content") else None
+        content: Optional[Union[bytes, str]] = None
+        if raw_content := e_dict.get("content"):
+            content = (
+                raw_content if isinstance(raw_content, bytes) else str(raw_content)
+            )
         object_key = e_dict.get("objectKey")
         chainlit_key = e_dict.get("chainlitKey")
         display = e_dict.get("display", "inline")
