@@ -21,10 +21,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: pr-build-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
-  cancel-in-progress: true
-
 jobs:
   comment:
     name: Comment build artifact on PR
@@ -33,6 +29,11 @@ jobs:
     defaults:
       run:
         shell: bash # explicit, so that `-o pipefail` is set
+    # Job level, so that the skipped runs (CI on push, merge_group, ...) of the
+    # same branch never take a slot in the group and cancel a comment job.
+    concurrency:
+      group: pr-build-comment-${{ github.event.workflow_run.event }}-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: true
     permissions:
       actions: read # list and download the artifact of the CI run
       contents: read # check out scripts/ of the default branch
