@@ -38,6 +38,8 @@ Chainlit is a Python framework for building production-ready conversational AI a
 | Backend (PyPI)    | `uv build`                                   | `backend/` | Build Python package — builds JS assets first, then bundles into the Python distribution  |
 | Single JS package | `pnpm --filter @chainlit/react-client build` | repo root  | Build one package (useful for publishing)                                                 |
 
+In CI there is one build per run: `.github/workflows/build.yaml` (called from `ci.yaml`) runs `uv build`, packs `@chainlit/react-client` and uploads the result as the `dist` artifact. The E2E tests install the wheel from that artifact instead of rebuilding. The build version is stamped by `scripts/ci_version.py` in CI only; `backend/chainlit/version.py` holds the next release version. See [RELENG.md](RELENG.md#preview-builds).
+
 ### Dev servers
 
 |          | Command                                           | Directory   | URL                                      |
