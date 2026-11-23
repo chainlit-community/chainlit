@@ -1,5 +1,9 @@
 name: Publish libs
 
+# Not set up for this fork: @chainlit/react-client is not published to npm yet
+# (no credentials are configured, so a real run fails at authentication). Manual
+# runs only; GitHub releases do not trigger it.
+
 on:
   workflow_dispatch:
     inputs:
@@ -8,8 +12,6 @@ on:
         required: false
         default: false
         type: boolean
-  release:
-    types: [published]
 
 permissions: read-all
 
@@ -20,9 +22,9 @@ jobs:
     steps:
       - name: Validate publishing branch and destination package index
         run: |
-          if [[ "${{ github.ref_name }}" != "main" && "${{ github.event_name }}" != "release" ]]; then
+          if [[ "${{ github.ref_name }}" != "main" ]]; then
             if [[ "${{ inputs.dry_run }}" != "true" ]]; then
-              echo "❌ Error: Only build from main branch or release tag can be published to npm registry."
+              echo "❌ Error: Only a build from the main branch can be published to npm registry."
               echo "Please check 'Dry run (test publishing)' when running from branch: ${{ github.ref_name }}"
               exit 1
             fi

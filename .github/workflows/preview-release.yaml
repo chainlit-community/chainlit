@@ -8,9 +8,8 @@ name: Preview release
 # Their build provenance was attested by that CI run (the attest job in
 # ci.yaml), so it names the commit they were built from.
 #
-# Releases created with GITHUB_TOKEN do not trigger other workflows, so
-# publish.yaml and publish-libs.yaml (`on: release: published`) do NOT run for
-# these pre-releases: nothing is published to PyPI or npm.
+# Nothing is published to PyPI or npm by these pre-releases: publish.yaml and
+# publish-libs.yaml only run when started by hand.
 
 on:
   workflow_run:
@@ -103,23 +102,12 @@ jobs:
         run: |
           # --kind release: version <base>.dev<N> without a local part, event
           # push, ref refs/heads/main; file names derived from the version.
+          # --verify-dist: SHA256SUMS is well formed, lists exactly the wheel,
+          # the sdist and the react-client tarball, and their digests match.
           fields="$(python3 -I scripts/release_notes.py validate "$RUNNER_TEMP/dist/build-info.json" \
-            --kind release --expect-sha "$HEAD_SHA" --expect-run-id "$RUN_ID")"
+            --kind release --expect-sha "$HEAD_SHA" --expect-run-id "$RUN_ID" \
+            --verify-dist "$RUNNER_TEMP/dist")"
           echo "$fields" | tee -a "$GITHUB_OUTPUT"
-
-          # SHA256SUMS must be well formed and list exactly the three assets.
-          cd "$RUNNER_TEMP/dist"
-          if grep -Evq '^[0-9a-f]{64} [ *][A-Za-z0-9._+-]+$' SHA256SUMS; then
-            echo "::error::SHA256SUMS is malformed."
-            exit 1
-          fi
-          listed="$(cut -c67- SHA256SUMS | LC_ALL=C sort)"
-          expected="$(sed -n 's/^\(wheel\|sdist\|react_client\)=//p' <<<"$fields" | LC_ALL=C sort)"
-          if [[ "$listed" != "$expected" || "$(wc -l <SHA256SUMS)" -ne 3 ]]; then
-            echo "::error::SHA256SUMS does not cover exactly the wheel, the sdist and the react-client tarball."
-            exit 1
-          fi
-          sha256sum --strict -c SHA256SUMS
 
       - name: Skip if this version is already released
         id: existing
