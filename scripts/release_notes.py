@@ -47,6 +47,10 @@ CHECKSUMS_NAME = "SHA256SUMS"
 MAX_CHECKSUMS_BYTES = 4 * 1024
 # GitHub refuses release bodies above 125000 characters.
 MAX_BODY_CHARS = 120_000
+# A line with exactly this text marks docs/releases/<V>.md as an unverified
+# draft, which a final release refuses. Keep in sync with scripts/ci_version.py
+# (backend/tests/test_release_notes.py checks it).
+DRAFT_MARKER = "<!-- release-notes: draft -->"
 
 # Name of the Python distribution on PyPI; the import package and the console
 # script are still called chainlit. Keep in sync with backend/pyproject.toml
@@ -420,6 +424,35 @@ def changelog_section(text: str, name: str) -> str | None:
     return None if body is None else "\n".join(body).strip()
 
 
+def release_changelog(text: str, version: str, base: str) -> tuple[str, str] | None:
+    """Return the changelog section an official release publishes: (name, body).
+
+    A final (``version == base``) publishes its own ``[<version>]`` section. A
+    pre-release publishes ``[Unreleased]`` or, when that is missing or empty
+    because the release PR already moved its entries, the ``[<base>]`` section.
+    None when no such section has content.
+
+    Duplicated in scripts/ci_version.py and scripts/release_notes.py (the two
+    scripts must stay standalone); backend/tests/test_release_notes.py checks
+    that the copies are identical.
+    """
+    for name in (version,) if version == base else ("Unreleased", base):
+        body = changelog_section(text, name)
+        if body:
+            return name, body
+    return None
+
+
+def has_draft_marker(text: str) -> bool:
+    """Whether release notes still carry DRAFT_MARKER on a line of its own.
+
+    Duplicated in scripts/ci_version.py and scripts/release_notes.py (the two
+    scripts must stay standalone); backend/tests/test_release_notes.py checks
+    that the copies are identical.
+    """
+    return any(line.strip() == DRAFT_MARKER for line in text.splitlines())
+
+
 def release_asset_url(repo: str, tag: str, filename: str) -> str:
     return (
         f"https://github.com/{repo}/releases/download/"
@@ -514,7 +547,9 @@ def render_official(
     """Body of the GitHub release of an official version.
 
     The hand-written notes and the changelog are trusted content of the
-    repository at the commit that was built; they are inserted verbatim.
+    repository at the commit that was built; they are inserted verbatim. A
+    pre-release takes ``[Unreleased]``, or ``[<base>]`` when that is empty; a
+    final refuses notes that still carry DRAFT_MARKER.
     """
     check_repo(repo)
     check_expectations(info, kind=OFFICIAL)
@@ -525,20 +560,30 @@ def render_official(
     requirement = f'"{DIST_NAME}=={version}"'
     changelog_text = _read_text(changelog, "the changelog (--changelog)")
 
-    section_name = "Unreleased" if info.prerelease else version
-    section = changelog_section(changelog_text, section_name)
-    if not section:
-        raise ValidationError(
-            f"the changelog has no '## [{section_name}]' section, or it is empty"
+    # The same choice as check_release_notes() of scripts/ci_version.py made
+    # when the build was stamped.
+    source = release_changelog(changelog_text, version, info.base_version)
+    if source is None:
+        wanted = (
+            f"'## [Unreleased]' or '## [{info.base_version}]'"
+            if info.prerelease
+            else f"'## [{version}]'"
         )
+        raise ValidationError(f"the changelog has no {wanted} section, or it is empty")
+    section_name, section = source
     if info.prerelease:
+        changes = (
+            "Changes since the last release:"
+            if section_name == "Unreleased"
+            else f"Changes in {info.base_version} since the last release:"
+        )
         intro = f"""\
 > [!NOTE]
 > This is a **pre-release** of `{DIST_NAME}` {info.base_version}, published for testing. It may still change before {info.base_version} is released; please report what you find.
 
 ## Changelog
 
-Changes since the last release:
+{changes}
 """
     else:
         notes = _read_text(
@@ -546,6 +591,12 @@ Changes since the last release:
         )
         if not notes.strip():
             raise ValidationError(f"the release notes file {version}.md is empty")
+        if has_draft_marker(notes):
+            raise ValidationError(
+                f"the release notes file {version}.md is still marked as a draft: "
+                f"verify the upgrade guide, then remove the '{DRAFT_MARKER}' line "
+                "(and the draft notice and the 'Unverified' section)"
+            )
         intro = f"""\
 {notes.strip()}
 

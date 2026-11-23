@@ -7,7 +7,7 @@ A guide tells someone running the previous release what they have to **do** to m
 The guide is part of the release:
 
 - It is added in the release PR, together with the changelog section of that version (see [RELENG.md](../../RELENG.md#publish-a-final-release)).
-- The publish workflow refuses a final version whose `docs/releases/<version>.md` is missing.
+- The publish workflow refuses a final version whose `docs/releases/<version>.md` is missing, or is still [marked as a draft](#the-draft-marker).
 - It becomes the first part of the notes of the GitHub release, followed by the changelog section and the install and verify instructions.
 
 ## Structure
@@ -34,7 +34,7 @@ The first draft is written by an AI agent, from:
 - the commits since the last final release (`git log <previous version>..HEAD`), including the bodies of the commit messages;
 - the code itself, for exact names and behaviour.
 
-The agent marks the draft as such at the top, and ends it with a section **Unverified / needs maintainer confirmation** that lists every statement it could not trace to the code or the changelog.
+The agent marks the draft as such at the top, with the [draft marker](#the-draft-marker) and a notice for readers, and ends it with a section **Unverified / needs maintainer confirmation** that lists every statement it could not trace to the code or the changelog.
 
 A maintainer then verifies the draft. The release PR is not ready to merge until every box is ticked:
 
@@ -44,4 +44,17 @@ A maintainer then verifies the draft. The release PR is not ready to merge until
 - [ ] Every name, command, version number and date in the guide has a source in this repository. Claims without one are removed.
 - [ ] Every item of the "Unverified" list is either confirmed and moved into the guide, or deleted.
 - [ ] The draft notice at the top and the "Unverified" section are removed.
+- [ ] The draft marker line is removed, last of all.
 - [ ] The install commands were run against the published files (a release candidate or a TestPyPI rehearsal), not just read.
+
+## The draft marker
+
+A guide that has not been verified carries this line, on its own, directly below the title:
+
+```md
+<!-- release-notes: draft -->
+```
+
+- Every new draft must have it, whoever writes it. It is an HTML comment, so it does not show in the rendered guide; the notice below it is what tells readers.
+- While the line is there, the publish workflow refuses to build the final version, and `scripts/release_notes.py` refuses to render its release notes. Pre-releases are not affected: they do not use the guide.
+- Removing the line is the maintainer's sign-off that the checklist above is complete. Remove it by hand, in the release PR, together with the draft notice and the "Unverified" section. An agent does not remove it.

@@ -23,7 +23,7 @@ Everything goes through one workflow, `.github/workflows/publish.yaml`, which is
 
 The run is titled "Publish `<version>` to `<index>`". It does the following, in order:
 
-1. Checks the version and the branch, and for a final version that its release notes exist. Nothing is built if a check fails.
+1. Checks the version and the branch, and that the release notes exist (see [Release notes](#release-notes)). This happens in the stamp step of the build job, about a minute into the run, after the dependencies are installed. If a check fails, nothing is built or uploaded; the lint, type-check and unit-test jobs run in parallel and still run to the end.
 2. Builds the wheel, the sdist and the `@chainlit/react-client` tarball with the version stamped at build time. Nothing is committed.
 3. Runs the full CI, including the E2E tests, on exactly the files that will be uploaded.
 4. Uploads the wheel and the sdist with PyPI trusted publishing. There are no API tokens. The upload job runs in the GitHub environment `pypi` or `testpypi`; the required reviewers of the `pypi` environment are the approval gate, so a run for PyPI waits there until a reviewer approves it.
@@ -36,13 +36,13 @@ A TestPyPI run stops after step 4: no tag, no release.
 - We use semantic versioning (major.minor.patch): major for breaking changes, patch for bug fixes only. If unsure, discuss with the other maintainers.
 - `version` in `backend/chainlit/version.py` on `main` always holds the next **final** version, e.g. `3.0.0`. It never holds a pre-release.
 - The version you type must be that version, or an alpha, beta or release candidate of it in PEP 440 form: `3.0.0a0`, `3.0.0b1`, `3.0.0rc1` (not `3.0.0-rc1`). `.dev` versions are refused; those are preview builds.
-- It must not already be tagged, and it must be higher than every official version of that release published before it (`3.0.0rc2` after `3.0.0rc1`, never the other way round).
+- For `index=pypi`, it must not already be tagged, and it must be higher than every official version of that release published before it (`3.0.0rc2` after `3.0.0rc1`, never the other way round). A TestPyPI rehearsal is not bound by the tags.
 - `index=pypi` is only allowed from `main`. A TestPyPI rehearsal may run from any branch. Publishing from `release/**` backport branches is not supported yet.
 
 ### Release notes
 
-- **Pre-release** (alpha, beta, RC): generated from the `[Unreleased]` section of `CHANGELOG.md`, followed by the install and verify instructions. Edit them in the draft if needed.
-- **Final**: written beforehand, in a release PR (see [Publish a final release](#publish-a-final-release)). The body of the draft is the upgrade guide `docs/releases/<V>.md`, then the `[<V>]` section of `CHANGELOG.md`, then the install and verify instructions. The workflow refuses a final version if either the guide or the changelog section is missing.
+- **Pre-release** (alpha, beta, RC): generated from the `[Unreleased]` section of `CHANGELOG.md`, followed by the install and verify instructions. Edit them in the draft if needed. If `[Unreleased]` is empty because the release PR has already moved its entries (e.g. `3.0.0rc3` after the CI of the final failed), the `[<V>]` section of the final version is used instead. The workflow refuses a pre-release if both are missing or empty.
+- **Final**: written beforehand, in a release PR (see [Publish a final release](#publish-a-final-release)). The body of the draft is the upgrade guide `docs/releases/<V>.md`, then the `[<V>]` section of `CHANGELOG.md`, then the install and verify instructions. The workflow refuses a final version if either the guide or the changelog section is missing, or if the guide still contains the draft marker, a line `<!-- release-notes: draft -->`. Removing that line is the maintainer's sign-off on the guide; see [docs/releases/README.md](docs/releases/README.md#the-draft-marker).
 
 ## Publish a pre-release
 
@@ -59,13 +59,13 @@ Pre-releases need no commits and no pull request. Between an RC and the final ve
 
 1. **Open the release PR.** It contains:
    - `CHANGELOG.md`: the entries of `[Unreleased]` moved into a new `## [<V>] - <date>` section, breaking changes marked clearly. Leave an empty `## [Unreleased]` heading in place.
-   - `docs/releases/<V>.md`: the upgrade guide. An AI agent drafts it from the changelog and the commits since the last final release; a maintainer verifies it. See [docs/releases/README.md](docs/releases/README.md) for the required structure and the checklist.
+   - `docs/releases/<V>.md`: the upgrade guide. An AI agent drafts it from the changelog and the commits since the last final release; a maintainer verifies it and removes the draft marker. See [docs/releases/README.md](docs/releases/README.md) for the required structure and the checklist.
    - If the version in `version.py` is not the one you are releasing (e.g. a breaking change was merged since the last bump), the corrected version.
    - `version` in `libs/*/package.json`, if those packages changed and the version was not bumped yet.
 2. **Get the release PR reviewed and merged.**
 3. **Run the workflow** on `main`: `gh workflow run publish.yaml -f version=<V> -f index=pypi`.
 4. **Approve the upload.** When CI has passed, the run waits for the `pypi` environment. Once a required reviewer approves, the version is on PyPI and cannot be changed.
-5. **Review the draft release.** Read the notes as rendered, fix what needs fixing and click **Publish release**. This creates the tag.
+5. **Review the draft release.** Read the notes as rendered, fix what needs fixing and click **Publish release**. This creates the tag. Until then, `main` keeps producing `<V>.devN` preview builds, so publish the draft promptly and then merge the bump PR.
 6. **[Verify](#verify-a-published-release)** the published version.
 7. **Open the bump PR straight away.** Set `version` in `backend/chainlit/version.py` to the next version (e.g. `3.0.1` after `3.0.0`). This is required, not optional: while a tag equal to the version in `version.py` exists, builds of `main` fail, so no preview build is published (pull request builds only warn).
 8. If needed, open PRs to update the version referenced in documentation and example code.
@@ -74,7 +74,7 @@ Pre-releases need no commits and no pull request. Between an RC and the final ve
 
 A rehearsal runs everything up to and including the upload, against [test.pypi.org](https://test.pypi.org/project/chainlit-community/). It needs no approval and may run from any branch, which makes it the way to test changes to the workflow itself.
 
-1. Pick a throwaway alpha that will never be published for real, e.g. `3.0.0a0`. Each rehearsal uses up its version on TestPyPI, so the next one needs `3.0.0a1`, and so on.
+1. Pick a throwaway alpha that will never be published for real, e.g. `3.0.0a0`. Rehearsals are not bound by the existing tags, so `3.0.0a0` stays valid after `3.0.0rc1` has been released. But each version can be uploaded to TestPyPI only once: every rehearsal uses up its version, so the next one needs `3.0.0a1`, and so on.
 2. Run the workflow: `gh workflow run publish.yaml --ref <branch> -f version=3.0.0a0 -f index=testpypi`.
 3. Check the result in a fresh virtual environment. TestPyPI does not have the dependencies, so those come from PyPI:
 
@@ -111,13 +111,15 @@ sha256sum --ignore-missing -c SHA256SUMS
 
 A version uploaded to PyPI or TestPyPI can never be uploaded again, not even after deleting it. Everything below follows from that.
 
-| What happened                                              | What to do                                                                                                                                                                        |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A check or CI failed before the upload                     | Fix the cause and run the workflow again with the same version.                                                                                                                   |
-| A flaky job failed                                         | Use **Re-run failed jobs**. Never use **Re-run all jobs** once an upload has happened: it would build different files under a version that already exists.                        |
-| The upload succeeded, the release job failed               | Use **Re-run failed jobs**.                                                                                                                                                       |
-| The version is burned (partial or incorrect upload)        | Yank it on PyPI and publish the next one: the next `rcN` for a pre-release, the next patch version for a final (which needs its own bump of `version.py` and its own release PR). |
-| The draft release is wrong, but the files on PyPI are fine | Edit the draft; nothing needs to be rebuilt.                                                                                                                                      |
+| What happened                                                         | What to do                                                                                                                                                                            |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A check or CI failed before the upload                                | Fix the cause and run the workflow again with the same version.                                                                                                                       |
+| A flaky job failed                                                    | Use **Re-run failed jobs**. Never use **Re-run all jobs** once an upload has happened: it would build different files under a version that already exists.                            |
+| The upload succeeded, the release job failed                          | Use **Re-run failed jobs**.                                                                                                                                                           |
+| The version is burned (partial or incorrect upload)                   | Yank it on PyPI and publish the next one: the next `rcN` for a pre-release, the next patch version for a final (which needs its own bump of `version.py` and its own release PR).     |
+| The draft release is wrong, but the files on PyPI are fine            | Edit the draft; nothing needs to be rebuilt.                                                                                                                                          |
+| The same version was run again before its draft release was published | The tag does not exist yet, so the version check passes and the full CI runs; the index then rejects the duplicate upload. Nothing is harmed. Publish the existing draft instead.     |
+| The `pypi` approval came more than 14 days after the build            | The upload job fails when it downloads the build, because the artifact has expired. Nothing was uploaded, so the version is not burned: run the workflow again with the same version. |
 
 ## One-time setup
 

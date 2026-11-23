@@ -8,7 +8,7 @@ The community fork does not publish this package to npm yet. `npm install @chain
 
 ### From GitHub releases
 
-Every [release on GitHub](https://github.com/chainlit-community/chainlit/releases) of the community fork, official versions and preview builds alike, includes a tarball of this package, which you can install by URL. Replace `<version>` with the release tag (e.g. `3.0.0`, or `3.0.0.dev1234` for a preview build) and `<client-version>` with the version in the tarball's file name (e.g. `0.6.0-dev.1234` for a preview build); the release notes have the exact commands.
+Every [release on GitHub](https://github.com/chainlit-community/chainlit/releases) of the community fork, official versions and preview builds alike, includes a tarball of this package, which you can install by URL. Replace `<version>` with the release tag (e.g. `3.0.0`, or `3.0.0.dev1234` for a preview build) and `<client-version>` with the version in the tarball's file name; the release notes have the exact commands. That version always has the form `<package.json version>-dev.<N>` (e.g. `0.6.0-dev.1234`, so `chainlit-react-client-0.6.0-dev.1234.tgz`), for official versions as well as preview builds: clean versions such as `0.6.0` will come with publication to npm.
 
 ```sh
 # npm

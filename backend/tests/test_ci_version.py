@@ -931,6 +931,65 @@ def test_release_ignores_unrelated_tags(repo: Path, tags: list, version: str):
     assert release(repo, version)["version"] == version
 
 
+@pytest.mark.parametrize(
+    ("tag", "version"),
+    [
+        ("3.0.0rc1", "3.0.0a0"),
+        ("3.0.0rc1", "3.0.0rc1"),
+        ("3.0.0", "3.0.0a0"),
+        ("3.0.0", "3.0.0rc1"),
+        ("3.0.0", "3.0.0"),
+    ],
+)
+def test_rehearsal_is_not_bound_by_tags(repo: Path, tag: str, version: str):
+    """A TestPyPI rehearsal creates no tag; only PyPI releases must go forward."""
+    write_notes(repo, "3.0.0")
+    git(repo, "tag", tag)
+    commit(repo)
+
+    assert release(repo, version, "testpypi")["version"] == version
+    assert (
+        release(repo, version, "testpypi", ref="refs/heads/rehearsal")["version"]
+        == version
+    )
+    message = (
+        rf"Tag {re.escape(version)} already exists"
+        if version == tag
+        else "does not sort above the existing tag"
+    )
+    with pytest.raises(ci_version.VersionError, match=message):
+        release(repo, version, "pypi")
+
+
+def test_rehearsal_keeps_every_other_rule(repo: Path):
+    write_notes(repo)
+    git(repo, "tag", "3.0.0rc1")
+
+    for version, kwargs, message in (
+        ("3.0.0.dev1", {}, "not a canonical official version"),
+        ("3.0.1a0", {}, "is not 3.0.0 or one of its pre-releases"),
+        ("3.0.0a0", {"event": "push"}, "only built by a manual run"),
+        ("3.0.0a0", {"ref": "refs/tags/3.0.0rc1"}, "built from a branch"),
+        ("3.0.0", {}, r"has no '## \[3\.0\.0\]' section"),
+    ):
+        with pytest.raises(ci_version.VersionError, match=message):
+            release(repo, version, "testpypi", **kwargs)
+
+
+def test_rehearsal_does_not_need_the_tag_list(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+):
+    write_notes(repo)
+    real = ci_version.git
+    monkeypatch.setattr(
+        ci_version,
+        "git",
+        lambda root, *args: None if args[0] == "tag" else real(root, *args),
+    )
+
+    assert release(repo, "3.0.0a0", "testpypi")["version"] == "3.0.0a0"
+
+
 def test_release_needs_git_to_list_tags(repo: Path, monkeypatch: pytest.MonkeyPatch):
     write_notes(repo)
     real = ci_version.git
@@ -1024,27 +1083,89 @@ def test_final_release_needs_its_changelog_section(repo: Path):
         release(repo, "3.0.0")
 
 
-def test_pre_release_needs_unreleased_changes(repo: Path):
+def test_final_release_refuses_a_draft_guide(repo: Path):
+    write_notes(repo, "3.0.0")
+    notes = repo / "docs" / "releases" / "3.0.0.md"
+    marker = ci_version.DRAFT_MARKER
+    assert marker == "<!-- release-notes: draft -->"
+    notes.write_text(f"# Upgrading to 3.0.0\n\n{marker}\n\nRead this.\n", "utf-8")
+
+    for index in ("pypi", "testpypi"):
+        with pytest.raises(ci_version.VersionError) as error:
+            release(repo, "3.0.0", index)
+        message = str(error.value)
+        assert "docs/releases/3.0.0.md is still marked as a draft" in message
+        assert f"remove the '{marker}' line" in message
+        assert "Verify the upgrade guide" in message
+    # Pre-releases do not use the guide.
+    assert release(repo, "3.0.0rc1")["version"] == "3.0.0rc1"
+
+    # Indentation and line endings do not hide the marker.
+    notes.write_bytes(f"# Upgrading\r\n\r\n  {marker}  \r\n".encode())
+    with pytest.raises(ci_version.VersionError, match="still marked as a draft"):
+        release(repo, "3.0.0")
+
+    # Only a line of its own counts: prose may mention the marker.
+    notes.write_text(f"# Upgrading\n\nThe `{marker}` line is gone.\n", "utf-8")
+    assert release(repo, "3.0.0")["version"] == "3.0.0"
+
+
+def test_pre_release_needs_changes(repo: Path):
     with pytest.raises(ci_version.VersionError, match=r"CHANGELOG\.md is missing"):
         release(repo, "3.0.0rc1")
 
-    write_notes(repo, changelog="# Changelog\n\n## [3.0.0] - 2026-12-01\n\n- x\n")
-    with pytest.raises(
-        ci_version.VersionError, match=r"has no '## \[Unreleased\]' section"
+    for changelog in (
+        # Neither section.
+        "# Changelog\n\n## [2.12.0]\n\n- x\n",
+        # [Unreleased] empty, no section of the release.
+        "# Changelog\n\n## [Unreleased]\n\n## [2.12.0]\n\n- x\n",
+        # Both empty.
+        "# Changelog\n\n## [Unreleased]\n\n## [3.0.0] - 2026-12-01\n\n## [2.12.0]\n",
+        # The section of another release does not count.
+        "# Changelog\n\n## [Unreleased]\n\n## [3.0.1] - 2026-12-01\n\n- x\n",
     ):
-        release(repo, "3.0.0rc1")
-
-    write_notes(
-        repo, changelog="# Changelog\n\n## [Unreleased]\n\n## [2.12.0]\n\n- x\n"
-    )
-    with pytest.raises(
-        ci_version.VersionError, match=r"'## \[Unreleased\]' section of .* is empty"
-    ):
-        release(repo, "3.0.0rc1")
+        write_notes(repo, changelog=changelog)
+        with pytest.raises(ci_version.VersionError) as error:
+            release(repo, "3.0.0rc1")
+        message = str(error.value)
+        assert "CHANGELOG.md has no changes for 3.0.0rc1" in message
+        assert "'## [Unreleased]' section is missing or empty" in message
+        assert "so is its '## [3.0.0]' section" in message
 
     # A pre-release needs no notes file.
     write_notes(repo)
     assert release(repo, "3.0.0rc1")["version"] == "3.0.0rc1"
+
+
+@pytest.mark.parametrize(
+    "changelog",
+    [
+        "# Changelog\n\n## [Unreleased]\n\n## [3.0.0] - 2026-12-01\n\n- x\n",
+        "# Changelog\n\n## [3.0.0] - 2026-12-01\n\n- x\n\n## [2.12.0]\n\n- y\n",
+    ],
+    ids=["empty-unreleased", "no-unreleased"],
+)
+@pytest.mark.parametrize("version", ["3.0.0a0", "3.0.0rc3"])
+def test_pre_release_after_the_release_pr(repo: Path, changelog: str, version: str):
+    """The release PR empties [Unreleased]; an rc must still be buildable."""
+    write_notes(repo, changelog=changelog)
+
+    assert release(repo, version)["version"] == version
+
+
+def test_release_changelog():
+    choose = ci_version.release_changelog
+    both = "## [Unreleased]\n\n- New.\n\n## [3.0.0] - 2026-12-01\n\n- Final.\n"
+    moved = "## [Unreleased]\n\n## [3.0.0] - 2026-12-01\n\n- Final.\n"
+
+    assert choose(both, "3.0.0rc1", "3.0.0") == ("Unreleased", "- New.")
+    assert choose(moved, "3.0.0rc1", "3.0.0") == ("3.0.0", "- Final.")
+    assert choose(both, "3.0.0", "3.0.0") == ("3.0.0", "- Final.")
+    # A final never falls back to [Unreleased].
+    assert choose("## [Unreleased]\n\n- New.\n", "3.0.0", "3.0.0") is None
+    assert choose("## [Unreleased]\n\n## [3.0.0]\n", "3.0.0rc1", "3.0.0") is None
+    assert choose(moved, "3.0.1rc1", "3.0.1") is None
+    assert choose("", "3.0.0rc1", "3.0.0") is None
 
 
 def test_changelog_section():

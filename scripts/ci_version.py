@@ -34,11 +34,14 @@ Official releases (``stamp --release-version V --index testpypi|pypi``, or
   ``3.0.0``. Never a ``.dev`` or ``.post`` version.
 * ``pypi`` only from ``refs/heads/main``; ``testpypi`` (rehearsals) from any
   branch.
-* no tag ``V`` yet, and ``V`` sorts above every official version of that
-  release that is already tagged (preview tags such as ``3.0.0.dev123`` do not
-  count).
-* a final needs ``docs/releases/<V>.md`` and a ``## [<V>]`` section in
-  ``CHANGELOG.md``; a pre-release needs a non-empty ``## [Unreleased]`` one.
+* for ``pypi``: no tag ``V`` yet, and ``V`` sorts above every official version
+  of that release that is already tagged (preview tags such as
+  ``3.0.0.dev123`` do not count). A ``testpypi`` rehearsal creates no tag and
+  is not bound by the existing ones.
+* a final needs ``docs/releases/<V>.md``, without the draft marker
+  ``<!-- release-notes: draft -->``, and a ``## [<V>]`` section in
+  ``CHANGELOG.md``; a pre-release needs a non-empty ``## [Unreleased]``
+  section, or else a non-empty ``## [<base>]`` one.
 * the react-client version is stamped as for any other build.
 """
 
@@ -58,6 +61,10 @@ VERSION_FILE = Path("backend", "chainlit", "version.py")
 CLIENT_PACKAGE_JSON = Path("libs", "react-client", "package.json")
 CHANGELOG_FILE = Path("CHANGELOG.md")
 RELEASE_NOTES_DIR = Path("docs", "releases")
+# A line with exactly this text marks docs/releases/<V>.md as an unverified
+# draft, which a final release refuses. Keep in sync with
+# scripts/release_notes.py (backend/tests/test_release_notes.py checks it).
+DRAFT_MARKER = "<!-- release-notes: draft -->"
 BUILD_INFO_NAME = "build-info.json"
 CHECKSUMS_NAME = "SHA256SUMS"
 
@@ -264,6 +271,35 @@ def changelog_section(text: str, name: str) -> str | None:
     return None if body is None else "\n".join(body).strip()
 
 
+def release_changelog(text: str, version: str, base: str) -> tuple[str, str] | None:
+    """Return the changelog section an official release publishes: (name, body).
+
+    A final (``version == base``) publishes its own ``[<version>]`` section. A
+    pre-release publishes ``[Unreleased]`` or, when that is missing or empty
+    because the release PR already moved its entries, the ``[<base>]`` section.
+    None when no such section has content.
+
+    Duplicated in scripts/ci_version.py and scripts/release_notes.py (the two
+    scripts must stay standalone); backend/tests/test_release_notes.py checks
+    that the copies are identical.
+    """
+    for name in (version,) if version == base else ("Unreleased", base):
+        body = changelog_section(text, name)
+        if body:
+            return name, body
+    return None
+
+
+def has_draft_marker(text: str) -> bool:
+    """Whether release notes still carry DRAFT_MARKER on a line of its own.
+
+    Duplicated in scripts/ci_version.py and scripts/release_notes.py (the two
+    scripts must stay standalone); backend/tests/test_release_notes.py checks
+    that the copies are identical.
+    """
+    return any(line.strip() == DRAFT_MARKER for line in text.splitlines())
+
+
 def check_release_notes(root: Path, version: str, *, final: bool) -> None:
     """A release needs its hand-written notes before it can be built."""
     path = root / CHANGELOG_FILE
@@ -273,21 +309,25 @@ def check_release_notes(root: Path, version: str, *, final: bool) -> None:
         raise VersionError(
             f"{CHANGELOG_FILE.as_posix()} is missing; a release needs its changelog."
         ) from None
-    section = version if final else "Unreleased"
-    content = changelog_section(changelog, section)
-    if content is None:
-        raise VersionError(
-            f"{CHANGELOG_FILE.as_posix()} has no '## [{section}]' section. "
-            + (
+    match = OFFICIAL_VERSION_RE.fullmatch(version)
+    base = match["release"] if match else version
+    if release_changelog(changelog, version, base) is None:
+        if not final:
+            raise VersionError(
+                f"{CHANGELOG_FILE.as_posix()} has no changes for {version}: its "
+                f"'## [Unreleased]' section is missing or empty, and so is its "
+                f"'## [{base}]' section. A pre-release publishes the changes "
+                "listed in the first, or in the second once the release PR has "
+                "moved them there."
+            )
+        if changelog_section(changelog, version) is None:
+            raise VersionError(
+                f"{CHANGELOG_FILE.as_posix()} has no '## [{version}]' section. "
                 f"Rename '## [Unreleased]' to '## [{version}] - <date>' before "
                 "building the final release."
-                if final
-                else "A pre-release publishes the changes listed there."
             )
-        )
-    if not content:
         raise VersionError(
-            f"The '## [{section}]' section of {CHANGELOG_FILE.as_posix()} is empty."
+            f"The '## [{version}]' section of {CHANGELOG_FILE.as_posix()} is empty."
         )
     if not final:
         return
@@ -301,6 +341,33 @@ def check_release_notes(root: Path, version: str, *, final: bool) -> None:
             f"{notes.as_posix()} is missing or empty. A final release needs "
             "hand-written release notes (the upgrade guide) in that file."
         )
+    if has_draft_marker(text):
+        raise VersionError(
+            f"{notes.as_posix()} is still marked as a draft. Verify the upgrade "
+            f"guide, then remove the '{DRAFT_MARKER}' line (and the draft notice "
+            "and the 'Unverified' section) before building the final release."
+        )
+
+
+def check_release_tags(root: Path, base: str, version: str) -> None:
+    """A version is released once, and the releases of a version go forward."""
+    tags = git(root, "tag", "--list")
+    if tags is None:
+        raise VersionError("Could not list the git tags to check the release.")
+    key = official_sort_key(version)
+    for tag in tags.splitlines():
+        if tag == version:
+            raise VersionError(
+                f"Tag {version} already exists: that version is already released."
+            )
+        if not OFFICIAL_VERSION_RE.fullmatch(tag):
+            continue  # previews (3.0.0.dev123) and unrelated tags
+        tag_key = official_sort_key(tag)
+        if tag_key[0] == key[0] and tag_key >= key:
+            raise VersionError(
+                f"Release version {version} does not sort above the existing tag "
+                f"{tag}. Releases of {base} must go forward: a < b < rc < final."
+            )
 
 
 def check_release(
@@ -310,6 +377,9 @@ def check_release(
 
     This replaces check_not_released() for release builds: a tag named like
     the version being released always fails here, even on the tagged commit.
+
+    The two tag rules only apply to ``pypi``: a ``testpypi`` rehearsal never
+    creates a tag, and TestPyPI itself refuses a version it already has.
     """
     if not OFFICIAL_VERSION_RE.fullmatch(version):
         raise VersionError(
@@ -351,23 +421,8 @@ def check_release(
             f"{ref}. Use --index testpypi to rehearse from another branch."
         )
 
-    tags = git(root, "tag", "--list")
-    if tags is None:
-        raise VersionError("Could not list the git tags to check the release.")
-    key = official_sort_key(version)
-    for tag in tags.splitlines():
-        if tag == version:
-            raise VersionError(
-                f"Tag {version} already exists: that version is already released."
-            )
-        if not OFFICIAL_VERSION_RE.fullmatch(tag):
-            continue  # previews (3.0.0.dev123) and unrelated tags
-        tag_key = official_sort_key(tag)
-        if tag_key[0] == key[0] and tag_key >= key:
-            raise VersionError(
-                f"Release version {version} does not sort above the existing tag "
-                f"{tag}. Releases of {base} must go forward: a < b < rc < final."
-            )
+    if index == "pypi":
+        check_release_tags(root, base, version)
 
     check_release_notes(root, version, final=match["phase"] is None)
 

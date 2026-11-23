@@ -1356,11 +1356,94 @@ class TestOfficial:
         ):
             _render_official(FINAL_INFO, notes)
 
-    def test_pre_release_needs_unreleased_changes(self, notes: dict):
-        notes["changelog"].write_text(CHANGELOG.replace("## [Unreleased]", "## Next"))
+    @pytest.mark.parametrize(
+        "changelog",
+        [
+            CHANGELOG.replace("## [Unreleased]", "## Next").replace(
+                "[3.0.0]", "[3.0.1]"
+            ),
+            "## [Unreleased]\n\n## [3.0.0] - 2026-12-01\n\n## [2.12.0]\n- Old.\n",
+            "## [Unreleased]\n\n## [2.12.0]\n- Old.\n",
+        ],
+        ids=["neither", "both-empty", "empty-unreleased-only"],
+    )
+    def test_pre_release_needs_changes(self, changelog: str, notes: dict):
+        notes["changelog"].write_text(changelog)
 
-        with pytest.raises(rn.ValidationError, match=r"no '## \[Unreleased\]' section"):
+        with pytest.raises(
+            rn.ValidationError,
+            match=r"no '## \[Unreleased\]' or '## \[3\.0\.0\]' section, or it is empty",
+        ):
             _render_official(RC_INFO, notes)
+
+    @pytest.mark.parametrize(
+        "unreleased", ["## [Unreleased]\n\n", ""], ids=["empty", "missing"]
+    )
+    @pytest.mark.parametrize("index", ["pypi", "testpypi"])
+    def test_pre_release_after_the_release_pr_uses_the_release_section(
+        self, unreleased: str, index: str, notes: dict
+    ):
+        """The release PR moved the entries of [Unreleased] into [3.0.0]."""
+        notes["changelog"].write_text(
+            f"# Changelog\n\n{unreleased}## [3.0.0] - 2026-12-01\n\n### Removed\n\n"
+            "- **Breaking:** the thing.\n\n## [2.12.0] - 2026-08-25\n\n- Old.\n"
+        )
+
+        body = _render_official(RC_INFO, notes, index)
+
+        assert (
+            "## Changelog\n\nChanges in 3.0.0 since the last release:\n\n"
+            "### Removed\n\n- **Breaking:** the thing.\n\n## Install\n"
+        ) in body
+        assert "> This is a **pre-release** of `chainlit-community` 3.0.0" in body
+        assert "- Old." not in body
+        # Still a pre-release: the upgrade guide is not part of it.
+        assert "Upgrading to 3.0.0" not in body
+        headings = [line for line in body.splitlines() if line.startswith("## ")]
+        assert headings == ["## Changelog", "## Install", "## Verify"]
+
+    def test_pre_release_prefers_unreleased_changes(self, notes: dict):
+        body = _render_official(RC_INFO, notes)
+
+        assert "## Changelog\n\nChanges since the last release:\n\n### Added" in body
+        assert "Changes in 3.0.0" not in body
+
+    def test_final_refuses_a_draft_guide(self, notes: dict, tmp_path, capsys):
+        marker = rn.DRAFT_MARKER
+        assert marker == "<!-- release-notes: draft -->"
+        guide = notes["notes_dir"] / "3.0.0.md"
+        guide.write_text(NOTES.replace("\n", f"\n\n{marker}\n", 1), encoding="utf-8")
+
+        for index in ("pypi", "testpypi"):
+            with pytest.raises(rn.ValidationError) as error:
+                _render_official(FINAL_INFO, notes, index)
+            message = str(error.value)
+            assert "release notes file 3.0.0.md is still marked as a draft" in message
+            assert f"remove the '{marker}' line" in message
+            assert "verify the upgrade guide" in message
+        # Pre-releases do not use the guide.
+        assert marker not in _render_official(RC_INFO, notes)
+
+        path = str(_write(tmp_path, FINAL_INFO))
+        code, out, err = _run(
+            capsys,
+            "official",
+            path,
+            "--repo",
+            REPO,
+            "--index",
+            "pypi",
+            "--changelog",
+            str(notes["changelog"]),
+            "--notes-dir",
+            str(notes["notes_dir"]),
+        )
+        assert (code, out) == (1, "")
+        assert "3.0.0.md is still marked as a draft" in err
+
+        # Only a line of its own counts: prose may mention the marker.
+        guide.write_text(NOTES + f"\nThe `{marker}` line is gone.\n", encoding="utf-8")
+        assert f"The `{marker}` line is gone." in _render_official(FINAL_INFO, notes)
 
     def test_changelog_file_is_required(self, notes: dict):
         notes["changelog"].unlink()
@@ -1458,6 +1541,115 @@ def test_changelog_parsers_are_the_same_code(stamped_repo):
         return source[start : source.index("\n\n\n", start)]
 
     assert body(rn) == body(ci_version)
+
+
+@pytest.mark.parametrize("name", ["release_changelog", "has_draft_marker"])
+def test_shared_release_helpers_are_the_same_code(stamped_repo, name: str):
+    ci_version, _ = stamped_repo
+
+    def function(module) -> str:
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        start = source.index(f"def {name}(")
+        return source[start : source.index("\n\n\n", start)]
+
+    assert function(rn) == function(ci_version)
+    assert function(rn).count("\n") > 5
+    assert rn.DRAFT_MARKER == ci_version.DRAFT_MARKER
+
+
+def test_pre_release_after_the_release_pr_stamps_and_renders(
+    stamped_repo, tmp_path, capsys
+):
+    """End to end: [Unreleased] is empty, so the rc publishes the [3.0.0] section."""
+    ci_version, root = stamped_repo
+    changelog = root / "CHANGELOG.md"
+    changelog.write_text(
+        CHANGELOG.replace(
+            "### Added\n\n- An unreleased change with `code` and <b>html</b>.\n\n", ""
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        ci_version.changelog_section(changelog.read_text("utf-8"), "Unreleased") == ""
+    )
+    subprocess.run(["git", "tag", "3.0.0rc2"], cwd=root, check=False)
+    info = ci_version.compute(
+        root,
+        event="workflow_dispatch",
+        ref="refs/heads/main",
+        sha=SHA,
+        run_id="123456789",
+        number=1300,
+        release_version="3.0.0rc3",
+        index="pypi",
+    )
+
+    code, out, err = _run(
+        capsys,
+        "official",
+        str(_write(tmp_path, info)),
+        "--repo",
+        REPO,
+        "--index",
+        "pypi",
+        "--changelog",
+        str(changelog),
+        "--notes-dir",
+        str(root / "docs" / "releases"),
+    )
+    assert (code, err) == (0, "")
+    assert (
+        "## Changelog\n\nChanges in 3.0.0 since the last release:\n\n"
+        "### Removed\n\n- **Breaking:** the thing.\n\n## Install\n"
+    ) in out
+    assert '"chainlit-community==3.0.0rc3"' in out
+
+
+def test_draft_guide_is_refused_at_stamp_and_at_render(stamped_repo, tmp_path, capsys):
+    """End to end: the marker stops a final in both scripts, and only a final."""
+    ci_version, root = stamped_repo
+    (root / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
+    guide = root / ci_version.RELEASE_NOTES_DIR / "3.0.0.md"
+    guide.parent.mkdir(parents=True)
+    guide.write_text(f"# Upgrading\n\n{rn.DRAFT_MARKER}\n\nText.\n", encoding="utf-8")
+
+    def stamp(version: str) -> dict:
+        return ci_version.compute(
+            root,
+            event="workflow_dispatch",
+            ref="refs/heads/main",
+            sha=SHA,
+            run_id="123456789",
+            number=1300,
+            release_version=version,
+            index="pypi",
+        )
+
+    def render(info: dict) -> tuple[int, str, str]:
+        return _run(
+            capsys,
+            "official",
+            str(_write(tmp_path, info)),
+            "--repo",
+            REPO,
+            "--index",
+            "pypi",
+            "--changelog",
+            str(root / "CHANGELOG.md"),
+            "--notes-dir",
+            str(guide.parent),
+        )
+
+    with pytest.raises(ci_version.VersionError, match="still marked as a draft"):
+        stamp("3.0.0")
+    # The renderer checks on its own: it does not rely on the stamp-time check.
+    code, out, err = render(FINAL_INFO)
+    assert (code, out) == (1, "")
+    assert "still marked as a draft" in err
+    assert render(stamp("3.0.0rc1"))[0] == 0
+
+    guide.write_text("# Upgrading\n\nText.\n", encoding="utf-8")
+    assert render(stamp("3.0.0"))[0] == 0
 
 
 @pytest.mark.parametrize(
