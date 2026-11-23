@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-23
+
 ### Added
 
 - Preview builds. Every commit on `main` that passes CI is published as a pre-release on [GitHub Releases](https://github.com/chainlit-community/chainlit/releases), versioned `<next version>.dev<N>` (e.g. `3.0.0.dev1234`), with the wheel, the sdist, the `@chainlit/react-client` tarball, `SHA256SUMS` and build provenance attestations. The wheel includes the built frontend, so it installs by URL without Node or pnpm; see [Installation](README.md#installation). Preview builds are not published to PyPI or npm.
