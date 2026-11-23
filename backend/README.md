@@ -37,14 +37,16 @@ Releases of this fork are not published to PyPI for now. They are distributed th
 
 ### Preview builds
 
-Every commit on `main` that passes CI is published there as a pre-release, with a version such as `3.0.0.dev1234`. Pick one from the [Releases page](https://github.com/chainlit-community/chainlit/releases) and install its wheel by URL, replacing `<version>`:
+Every commit on `main` that passes CI is published there as a pre-release, with a version such as `3.0.0.dev1234`. Pick one from the [Releases page](https://github.com/chainlit-community/chainlit/releases) and install its wheel by URL, replacing `<version>`. Use the one command that matches your tooling:
 
 ```sh
 # pip
 pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
 
-# uv
+# uv, in a project: records the dependency in pyproject.toml
 uv add "chainlit @ https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl"
+
+# uv, without a project: installs into the active virtual environment only
 uv pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
 
 # poetry
