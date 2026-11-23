@@ -33,27 +33,33 @@ https://github.com/user-attachments/assets/b3738aba-55c0-42fa-ac00-6efd1ee0d148
 
 ## Installation
 
-Releases of this fork are not published to PyPI for now. They are distributed through [GitHub Releases](https://github.com/chainlit-community/chainlit/releases).
+This fork is published on PyPI as [`chainlit-community`](https://pypi.org/project/chainlit-community/). Only the name of the distribution is different: you still `import chainlit` in Python and run the `chainlit` command.
 
-### Preview builds
-
-Every commit on `main` that passes CI is published there as a pre-release, with a version such as `3.0.0.dev1234`. Pick one from the [Releases page](https://github.com/chainlit-community/chainlit/releases) and install its wheel by URL, replacing `<version>`. Use the one command that matches your tooling:
+Use the one command that matches your tooling:
 
 ```sh
 # pip
-pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
+pip install chainlit-community
 
 # uv, in a project: records the dependency in pyproject.toml
-uv add "chainlit @ https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl"
+uv add chainlit-community
 
 # uv, without a project: installs into the active virtual environment only
-uv pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
+uv pip install chainlit-community
 
 # poetry
-poetry add https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit-<version>-py3-none-any.whl
+poetry add chainlit-community
 ```
 
-The notes of each release have these commands with the version filled in, plus how to verify the download against `SHA256SUMS` and its build provenance attestation. The wheel includes the built frontend, so Node and pnpm are not needed.
+Extras go on the new name as well, e.g. `pip install "chainlit-community[custom-data]"`.
+
+> ⚠️ **Warning:** if the original `chainlit` distribution is installed, uninstall it first (`pip uninstall chainlit`). `chainlit` and `chainlit-community` both provide the `chainlit` import package, so when both are installed they overwrite each other's files.
+>
+> `pip install chainlit` still installs the last release of the original project from PyPI. That package is unmaintained and does not receive the security fixes made in this fork. For security reasons, we strongly recommend that you do not install it. A third-party package that depends on `chainlit` will pull it in alongside `chainlit-community`; `pip show chainlit` tells you whether it is installed and what requires it.
+
+The [PyPI project page](https://pypi.org/project/chainlit-community/#history) and the [Releases page](https://github.com/chainlit-community/chainlit/releases) show which versions have been published. To install a release candidate, pin it exactly, e.g. `pip install chainlit-community==3.0.0rc1`. If the version you need has not been published yet, use a preview build.
+
+Coming from the original `chainlit`? Each final release has an [upgrade guide](https://github.com/chainlit-community/chainlit/tree/main/docs/releases).
 
 Then check that it works:
 
@@ -62,6 +68,26 @@ chainlit hello
 ```
 
 If this opens the `hello app` in your browser, you're all set!
+
+### Preview builds
+
+Every commit on `main` that passes CI is published as a pre-release on [GitHub Releases](https://github.com/chainlit-community/chainlit/releases), with a version such as `3.0.0.dev1234`. Preview builds are not published to PyPI. Pick one from the Releases page and install its wheel by URL, replacing `<version>`. Use the one command that matches your tooling:
+
+```sh
+# pip
+pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit_community-<version>-py3-none-any.whl
+
+# uv, in a project: records the dependency in pyproject.toml
+uv add "chainlit-community @ https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit_community-<version>-py3-none-any.whl"
+
+# uv, without a project: installs into the active virtual environment only
+uv pip install https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit_community-<version>-py3-none-any.whl
+
+# poetry
+poetry add https://github.com/chainlit-community/chainlit/releases/download/<version>/chainlit_community-<version>-py3-none-any.whl
+```
+
+The notes of each release have these commands with the version filled in, plus how to verify the download against `SHA256SUMS` and its build provenance attestation. The wheel includes the built frontend, so Node and pnpm are not needed.
 
 ### From source
 
@@ -72,8 +98,6 @@ pip install git+https://github.com/chainlit-community/chainlit.git#subdirectory=
 ```
 
 (Requires Node and pnpm installed on the system.)
-
-> ⚠️ **Warning:** `pip install chainlit` installs the last release of the original project from PyPI. That package is unmaintained and does not receive the security fixes made in this fork. For security reasons, we strongly recommend that you do not install it.
 
 ## 🚀 Quickstart
 

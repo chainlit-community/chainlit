@@ -32,13 +32,15 @@ Chainlit is a Python framework for building production-ready conversational AI a
 
 ### Build
 
-|                   | Command                                      | Directory  | What it does                                                                              |
-| ----------------- | -------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
-| All JS packages   | `pnpm build`                                 | repo root  | Build all workspace packages (frontend, react-client, copilot) via `pnpm run --recursive` |
-| Backend (PyPI)    | `uv build`                                   | `backend/` | Build Python package — builds JS assets first, then bundles into the Python distribution  |
-| Single JS package | `pnpm --filter @chainlit/react-client build` | repo root  | Build one package (useful for publishing)                                                 |
+|                   | Command                                      | Directory  | What it does                                                                                  |
+| ----------------- | -------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------- |
+| All JS packages   | `pnpm build`                                 | repo root  | Build all workspace packages (frontend, react-client, copilot) via `pnpm run --recursive`     |
+| Backend (PyPI)    | `uv build`                                   | `backend/` | Build the `chainlit-community` wheel and sdist — builds JS assets first, then bundles them in |
+| Single JS package | `pnpm --filter @chainlit/react-client build` | repo root  | Build one package (useful for publishing)                                                     |
 
-In CI there is one build per run: `.github/workflows/build.yaml` (called from `ci.yaml`) runs `uv build`, packs `@chainlit/react-client` and uploads the result as the `dist` artifact. The E2E tests install the wheel from that artifact instead of rebuilding. The build version is stamped by `scripts/ci_version.py` in CI only; `backend/chainlit/version.py` holds the next release version. See [RELENG.md](RELENG.md#preview-builds).
+In CI there is one build per run: `.github/workflows/build.yaml` (called from `ci.yaml`) runs `uv build`, packs `@chainlit/react-client` and uploads the result as the `dist` artifact. The E2E tests install the wheel from that artifact instead of rebuilding. The build version is stamped by `scripts/ci_version.py` in CI only; `backend/chainlit/version.py` holds the next final release version. See [RELENG.md](RELENG.md#preview-builds).
+
+Official versions are published by hand, to PyPI and as a GitHub release, with `.github/workflows/publish.yaml`. See [RELENG.md](RELENG.md) before touching anything related to publishing.
 
 ### Dev servers
 
@@ -126,7 +128,7 @@ A pull request that changes what users install, run or see adds an entry to `## 
 ### Monorepo structure
 
 ```
-backend/          # Python package (published to PyPI as "chainlit")
+backend/          # Python package "chainlit" (published to PyPI as "chainlit-community")
 frontend/         # React app (built output served by backend)
 libs/
   react-client/   # @chainlit/react-client — published npm package with React hooks

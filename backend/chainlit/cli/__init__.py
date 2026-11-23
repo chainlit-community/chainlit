@@ -28,6 +28,7 @@ from chainlit.markdown import init_markdown
 from chainlit.secret import random_secret
 from chainlit.translations import _safe_print
 from chainlit.utils import check_file
+from chainlit.version import __version__
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,7 +51,7 @@ def assert_app():
 
 # Create the main command group for Chainlit CLI
 @click.group(context_settings={"auto_envvar_prefix": "CHAINLIT"})
-@click.version_option(prog_name="Chainlit")
+@click.version_option(version=__version__, prog_name="Chainlit")
 def cli():
     return
 

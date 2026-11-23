@@ -7,6 +7,8 @@ Standard library only, so it runs before anything is installed:
     # ... build the wheel, the sdist and the react-client tarball into dist/ ...
     python scripts/ci_version.py finalize --dist dist
 
+The Python distribution is ``chainlit-community`` (imported as ``chainlit``).
+
 Versioning scheme, with ``base`` the release version in
 ``backend/chainlit/version.py`` (``3.0.0``, or a pre-release such as
 ``3.0.0rc1``) and ``N`` the number of commits reachable from HEAD:
@@ -22,6 +24,25 @@ Versioning scheme, with ``base`` the release version in
 ``stamp`` prints the build metadata and, with ``--write``, rewrites
 ``version.py`` and the react-client ``package.json`` in place. ``finalize``
 checks the built files against that metadata and writes ``SHA256SUMS``.
+
+Official releases (``stamp --release-version V --index testpypi|pypi``, or
+``$RELEASE_VERSION`` and ``$PUBLISH_INDEX``) are built on demand by a
+``workflow_dispatch`` run and get the version ``V`` exactly:
+
+* ``V`` is the ``version.py`` version, which must be a final one, or a
+  pre-release of it: ``3.0.0a0``, ``3.0.0b2``, ``3.0.0rc1`` or ``3.0.0`` for
+  ``3.0.0``. Never a ``.dev`` or ``.post`` version.
+* ``pypi`` only from ``refs/heads/main``; ``testpypi`` (rehearsals) from any
+  branch.
+* for ``pypi``: no tag ``V`` yet, and ``V`` sorts above every official version
+  of that release that is already tagged (preview tags such as
+  ``3.0.0.dev123`` do not count). A ``testpypi`` rehearsal creates no tag and
+  is not bound by the existing ones.
+* a final needs ``docs/releases/<V>.md``, without the draft marker
+  ``<!-- release-notes: draft -->``, and a ``## [<V>]`` section in
+  ``CHANGELOG.md``; a pre-release needs a non-empty ``## [Unreleased]``
+  section, or else a non-empty ``## [<base>]`` one.
+* the react-client version is stamped as for any other build.
 """
 
 from __future__ import annotations
@@ -38,8 +59,24 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = Path("backend", "chainlit", "version.py")
 CLIENT_PACKAGE_JSON = Path("libs", "react-client", "package.json")
+CHANGELOG_FILE = Path("CHANGELOG.md")
+RELEASE_NOTES_DIR = Path("docs", "releases")
+# A line with exactly this text marks docs/releases/<V>.md as an unverified
+# draft, which a final release refuses. Keep in sync with
+# scripts/release_notes.py (backend/tests/test_release_notes.py checks it).
+DRAFT_MARKER = "<!-- release-notes: draft -->"
 BUILD_INFO_NAME = "build-info.json"
 CHECKSUMS_NAME = "SHA256SUMS"
+
+# Name of the Python distribution on PyPI; the import package and the console
+# script are still called chainlit. Keep in sync with backend/pyproject.toml
+# and scripts/release_notes.py (backend/tests/test_ci_version.py checks it).
+DIST_NAME = "chainlit-community"
+# The same name as it appears in wheel and sdist file names (PEP 625).
+DIST_FILE_PREFIX = DIST_NAME.replace("-", "_")
+RELEASE_EVENT = "workflow_dispatch"
+RELEASE_BRANCH_REF = "refs/heads/main"
+INDEXES = ("testpypi", "pypi")
 
 # All patterns spell out [0-9]: \d would also match non-ASCII digits.
 _NUMBER = r"(?:0|[1-9][0-9]*)"
@@ -48,6 +85,11 @@ _NUMBER = r"(?:0|[1-9][0-9]*)"
 BASE_VERSION_RE = re.compile(
     rf"{_NUMBER}(?:\.{_NUMBER}){{1,3}}(?:(?:a|b|rc){_NUMBER})?"
 )
+OFFICIAL_VERSION_RE = re.compile(
+    rf"(?P<release>{_NUMBER}(?:\.{_NUMBER}){{1,3}})"
+    rf"(?:(?P<phase>a|b|rc)(?P<number>{_NUMBER}))?"
+)
+_PHASE_RANK = {"a": 0, "b": 1, "rc": 2, None: 3}
 # semver X.Y.Z with an optional pre-release and no build metadata.
 _SEMVER_IDENTIFIER = rf"(?:{_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 CLIENT_VERSION_RE = re.compile(
@@ -181,6 +223,210 @@ def check_not_released(root: Path, base: str, *, strict: bool) -> None:
     print(f"::warning::{message}", file=sys.stderr)
 
 
+def official_sort_key(version: str) -> tuple[tuple[int, ...], int, int]:
+    """Sort key of a canonical official version: a < b < rc < final.
+
+    The first element is the release segment without its trailing zeros
+    (``3.0`` and ``3.0.0`` are the same release); it is also what tells whether
+    two versions belong to the same release.
+    """
+    match = OFFICIAL_VERSION_RE.fullmatch(version)
+    if not match:
+        raise ValueError(f"not a canonical official version: {version!r}")
+    release = [int(part) for part in match["release"].split(".")]
+    while len(release) > 1 and release[-1] == 0:
+        release.pop()
+    return tuple(release), _PHASE_RANK[match["phase"]], int(match["number"] or 0)
+
+
+def changelog_section(text: str, name: str) -> str | None:
+    """Return the body of the ``## [<name>]`` section of a Keep a Changelog file.
+
+    None when there is no such heading, an empty string when the section has
+    no content. The section ends at the next second-level heading outside a
+    fenced code block.
+
+    scripts/release_notes.py has an identical copy (the two scripts must stay
+    standalone); backend/tests/test_release_notes.py checks they agree.
+    """
+    heading = re.compile(rf"## \[{re.escape(name)}\](?:[ \t].*)?")
+    body: list[str] | None = None
+    fence: str | None = None
+    for line in text.splitlines():
+        marker = re.match(r" {0,3}(`{3,}|~{3,})", line)
+        if fence is None:
+            if line.startswith("## "):
+                if body is not None:
+                    break
+                if heading.fullmatch(line.rstrip()):
+                    body = []
+                continue
+            if marker:
+                fence = marker[1]
+        elif marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence):
+            if not line.strip().strip(fence[0]):
+                fence = None
+        if body is not None:
+            body.append(line)
+    return None if body is None else "\n".join(body).strip()
+
+
+def release_changelog(text: str, version: str, base: str) -> tuple[str, str] | None:
+    """Return the changelog section an official release publishes: (name, body).
+
+    A final (``version == base``) publishes its own ``[<version>]`` section. A
+    pre-release publishes ``[Unreleased]`` or, when that is missing or empty
+    because the release PR already moved its entries, the ``[<base>]`` section.
+    None when no such section has content.
+
+    Duplicated in scripts/ci_version.py and scripts/release_notes.py (the two
+    scripts must stay standalone); backend/tests/test_release_notes.py checks
+    that the copies are identical.
+    """
+    for name in (version,) if version == base else ("Unreleased", base):
+        body = changelog_section(text, name)
+        if body:
+            return name, body
+    return None
+
+
+def has_draft_marker(text: str) -> bool:
+    """Whether release notes still carry DRAFT_MARKER on a line of its own.
+
+    Duplicated in scripts/ci_version.py and scripts/release_notes.py (the two
+    scripts must stay standalone); backend/tests/test_release_notes.py checks
+    that the copies are identical.
+    """
+    return any(line.strip() == DRAFT_MARKER for line in text.splitlines())
+
+
+def check_release_notes(root: Path, version: str, *, final: bool) -> None:
+    """A release needs its hand-written notes before it can be built."""
+    path = root / CHANGELOG_FILE
+    try:
+        changelog = path.read_text(encoding="utf-8")
+    except OSError:
+        raise VersionError(
+            f"{CHANGELOG_FILE.as_posix()} is missing; a release needs its changelog."
+        ) from None
+    match = OFFICIAL_VERSION_RE.fullmatch(version)
+    base = match["release"] if match else version
+    if release_changelog(changelog, version, base) is None:
+        if not final:
+            raise VersionError(
+                f"{CHANGELOG_FILE.as_posix()} has no changes for {version}: its "
+                f"'## [Unreleased]' section is missing or empty, and so is its "
+                f"'## [{base}]' section. A pre-release publishes the changes "
+                "listed in the first, or in the second once the release PR has "
+                "moved them there."
+            )
+        if changelog_section(changelog, version) is None:
+            raise VersionError(
+                f"{CHANGELOG_FILE.as_posix()} has no '## [{version}]' section. "
+                f"Rename '## [Unreleased]' to '## [{version}] - <date>' before "
+                "building the final release."
+            )
+        raise VersionError(
+            f"The '## [{version}]' section of {CHANGELOG_FILE.as_posix()} is empty."
+        )
+    if not final:
+        return
+    notes = RELEASE_NOTES_DIR / f"{version}.md"
+    try:
+        text = (root / notes).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = ""
+    if not text.strip():
+        raise VersionError(
+            f"{notes.as_posix()} is missing or empty. A final release needs "
+            "hand-written release notes (the upgrade guide) in that file."
+        )
+    if has_draft_marker(text):
+        raise VersionError(
+            f"{notes.as_posix()} is still marked as a draft. Verify the upgrade "
+            f"guide, then remove the '{DRAFT_MARKER}' line (and the draft notice "
+            "and the 'Unverified' section) before building the final release."
+        )
+
+
+def check_release_tags(root: Path, base: str, version: str) -> None:
+    """A version is released once, and the releases of a version go forward."""
+    tags = git(root, "tag", "--list")
+    if tags is None:
+        raise VersionError("Could not list the git tags to check the release.")
+    key = official_sort_key(version)
+    for tag in tags.splitlines():
+        if tag == version:
+            raise VersionError(
+                f"Tag {version} already exists: that version is already released."
+            )
+        if not OFFICIAL_VERSION_RE.fullmatch(tag):
+            continue  # previews (3.0.0.dev123) and unrelated tags
+        tag_key = official_sort_key(tag)
+        if tag_key[0] == key[0] and tag_key >= key:
+            raise VersionError(
+                f"Release version {version} does not sort above the existing tag "
+                f"{tag}. Releases of {base} must go forward: a < b < rc < final."
+            )
+
+
+def check_release(
+    root: Path, base: str, *, version: str, index: str | None, event: str, ref: str
+) -> None:
+    """Refuse an official release that breaks one of the rules.
+
+    This replaces check_not_released() for release builds: a tag named like
+    the version being released always fails here, even on the tagged commit.
+
+    The two tag rules only apply to ``pypi``: a ``testpypi`` rehearsal never
+    creates a tag, and TestPyPI itself refuses a version it already has.
+    """
+    if not OFFICIAL_VERSION_RE.fullmatch(version):
+        raise VersionError(
+            f"Release version {version!r} is not a canonical official version "
+            "such as 3.0.0, 3.0.0a0, 3.0.0b2 or 3.0.0rc1: two to four numbers and "
+            "an optional aN, bN or rcN pre-release, without a 'v' prefix and "
+            "without .dev, .post, epoch or local parts."
+        )
+    if index not in INDEXES:
+        raise VersionError(
+            "A release needs the package index it is published to: --index "
+            f"{' or '.join(INDEXES)} (or $PUBLISH_INDEX)."
+        )
+    base_key = official_sort_key(base)
+    if base_key[1] != _PHASE_RANK[None]:
+        raise VersionError(
+            f"{VERSION_FILE.as_posix()} holds the pre-release {base}; to publish "
+            "official versions it must hold the final version they lead to "
+            "(3.0.0, not 3.0.0rc1). The pre-release is chosen when releasing."
+        )
+    match = OFFICIAL_VERSION_RE.fullmatch(version)
+    assert match is not None
+    if match["release"] != base:
+        raise VersionError(
+            f"Release version {version} is not {base} or one of its pre-releases "
+            f"({base}aN, {base}bN, {base}rcN). {VERSION_FILE.as_posix()} says the "
+            f"next release is {base}; change it first to release something else."
+        )
+    if event != RELEASE_EVENT:
+        raise VersionError(
+            f"Releases are only built by a manual run ({RELEASE_EVENT}), not by "
+            f"a {event!r} event."
+        )
+    if not ref.startswith("refs/heads/"):
+        raise VersionError(f"Releases are built from a branch, not from {ref!r}.")
+    if index == "pypi" and ref != RELEASE_BRANCH_REF:
+        raise VersionError(
+            f"Releases to PyPI are only built from {RELEASE_BRANCH_REF}, not from "
+            f"{ref}. Use --index testpypi to rehearse from another branch."
+        )
+
+    if index == "pypi":
+        check_release_tags(root, base, version)
+
+    check_release_notes(root, version, final=match["phase"] is None)
+
+
 def sanitize_label(value: str) -> str:
     """Make a string usable as a PEP 440 local version label.
 
@@ -227,12 +473,28 @@ def compute(
     run_id: str | None = None,
     pr_number: str | None = None,
     number: int | None = None,
+    release_version: str | None = None,
+    index: str | None = None,
 ) -> dict:
-    """Return the build metadata, in the build-info.json schema."""
+    """Return the build metadata, in the build-info.json schema.
+
+    With ``release_version`` this is an official release for ``index``;
+    without it a preview or pull request build, exactly as before.
+    """
     base = read_base_version(root)
     client_base = read_client_version(root)
     preview = event == "push" and ref == "refs/heads/main"
-    check_not_released(root, base, strict=preview)
+    if release_version:
+        check_release(
+            root, base, version=release_version, index=index, event=event, ref=ref
+        )
+    elif index:
+        raise VersionError(
+            "--index (or $PUBLISH_INDEX) only applies to a release; pass "
+            "--release-version too."
+        )
+    else:
+        check_not_released(root, base, strict=preview)
 
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise VersionError(f"Expected a full 40 character commit SHA, got {sha!r}")
@@ -240,9 +502,14 @@ def compute(
         number = build_number(root)
     pr = resolve_pr_number(pr_number, ref)
 
-    version = f"{base}.dev{number}"
-    if not preview:
-        version += f"+{local_label(event, ref, pr)}.g{sha[:7]}"
+    if release_version:
+        if pr is not None:
+            raise VersionError("A release cannot be built for a pull request.")
+        version = release_version
+    else:
+        version = f"{base}.dev{number}"
+        if not preview:
+            version += f"+{local_label(event, ref, pr)}.g{sha[:7]}"
     client_version = stamp_client_version(client_base, number)
 
     return {
@@ -256,8 +523,8 @@ def compute(
         "pr_number": pr,
         "run_id": run_id,
         "files": {
-            "wheel": f"chainlit-{version}-py3-none-any.whl",
-            "sdist": f"chainlit-{version}.tar.gz",
+            "wheel": f"{DIST_FILE_PREFIX}-{version}-py3-none-any.whl",
+            "sdist": f"{DIST_FILE_PREFIX}-{version}.tar.gz",
             "react_client": f"chainlit-react-client-{client_version}.tgz",
         },
     }
@@ -339,6 +606,18 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     stamp.add_argument(
         "--build-number", type=int, help="Override the commit count (for tests)."
     )
+    stamp.add_argument(
+        "--release-version",
+        default=env("RELEASE_VERSION"),
+        help="Build the official release with exactly this version, such as "
+        "3.0.0rc1 or 3.0.0 (default: $RELEASE_VERSION; empty: a preview build).",
+    )
+    stamp.add_argument(
+        "--index",
+        default=env("PUBLISH_INDEX"),
+        help=f"Package index the release is for: {' or '.join(INDEXES)} "
+        "(default: $PUBLISH_INDEX). Required with --release-version.",
+    )
 
     final = commands.add_parser(
         "finalize", help=f"Verify the built files and write {CHECKSUMS_NAME}."
@@ -367,6 +646,8 @@ def run(args: argparse.Namespace) -> None:
         run_id=args.run_id or None,
         pr_number=args.pr_number or None,
         number=args.build_number,
+        release_version=args.release_version or None,
+        index=args.index or None,
     )
     if args.write:
         write_python_version(root, info["version"])
