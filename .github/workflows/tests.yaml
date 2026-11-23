@@ -2,7 +2,8 @@ name: Unit & integration tests
 
 on: [workflow_call]
 
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   tests:
