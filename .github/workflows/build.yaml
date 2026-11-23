@@ -1,0 +1,86 @@
+name: Build
+
+# Builds the Python wheel + sdist and the @chainlit/react-client tarball once
+# per CI run and uploads them as the `dist` artifact, for the other jobs and
+# workflows to consume instead of rebuilding.
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: Version stamped on the Python distributions, e.g. 3.0.0.dev1234.
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.stamp.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The build number is the commit count and the version guard reads
+          # tags, so the full history (which brings the tags along) is needed;
+          # trees and blobs of old commits are not.
+          fetch-depth: 0
+          filter: tree:0
+      - uses: ./.github/actions/pnpm-node-install
+        name: Install Node, pnpm and dependencies.
+      - uses: ./.github/actions/uv-python-install
+        name: Install Python, uv and Python dependencies
+        with:
+          # Dependencies only: installing the workspace package would run the
+          # JS build a first time.
+          uv-args: --no-install-workspace
+      - name: Stamp build version
+        id: stamp
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # For pull requests github.sha is the temporary merge commit; record
+          # the PR head instead, which is what reviewers and workflow_run see.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python scripts/ci_version.py stamp --write --build-info dist/build-info.json --sha "$HEAD_SHA"
+      - name: Build Python distributions
+        # Runs the JS build (frontend, copilot, react-client) through backend/build.py.
+        run: uv build --out-dir ../dist
+        working-directory: backend
+      - name: Pack @chainlit/react-client
+        run: pnpm pack --pack-destination ../../dist
+        working-directory: libs/react-client
+      - name: Check frontend and copilot folder included
+        run: |
+          unzip -q dist/chainlit-*.whl -d "$RUNNER_TEMP/unpacked"
+          ls "$RUNNER_TEMP/unpacked/chainlit/frontend/dist"
+          ls "$RUNNER_TEMP/unpacked/chainlit/copilot/dist"
+      - name: Check the wheel installs and reports the stamped version
+        env:
+          VERSION: ${{ steps.stamp.outputs.version }}
+        run: |
+          uv pip install --no-deps dist/chainlit-*.whl
+          installed="$(uv run --no-sync python -c 'from importlib.metadata import version; print(version("chainlit"))')"
+          echo "Installed chainlit $installed"
+          test "$installed" = "$VERSION"
+          uv run --no-sync chainlit --version
+      - name: Write checksums
+        run: |
+          python scripts/ci_version.py finalize --dist dist
+          cd dist
+          sha256sum --check --strict SHA256SUMS
+          ls -l
+      - name: Upload distributions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.tgz
+            dist/SHA256SUMS
+            dist/build-info.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
