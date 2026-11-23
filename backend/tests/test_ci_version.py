@@ -5,6 +5,8 @@ import importlib.util
 import json
 import re
 import subprocess
+import sys
+import tomllib
 from pathlib import Path
 from types import ModuleType
 
@@ -105,6 +107,8 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "GITHUB_SHA",
         "GITHUB_RUN_ID",
         "PR_NUMBER",
+        "RELEASE_VERSION",
+        "PUBLISH_INDEX",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -136,8 +140,8 @@ def test_push_to_main(repo: Path):
         "pr_number": None,
         "run_id": "123456789",
         "files": {
-            "wheel": "chainlit-3.0.0.dev3-py3-none-any.whl",
-            "sdist": "chainlit-3.0.0.dev3.tar.gz",
+            "wheel": "chainlit_community-3.0.0.dev3-py3-none-any.whl",
+            "sdist": "chainlit_community-3.0.0.dev3.tar.gz",
             "react_client": "chainlit-react-client-0.5.0-dev.3.tgz",
         },
     }
@@ -158,9 +162,11 @@ def test_pull_request(repo: Path):
     assert info["version"] == "3.0.0.dev3+pr42.g0123456"
     assert info["pr_number"] == 42
     assert info["files"]["wheel"] == (
-        "chainlit-3.0.0.dev3+pr42.g0123456-py3-none-any.whl"
+        "chainlit_community-3.0.0.dev3+pr42.g0123456-py3-none-any.whl"
     )
-    assert info["files"]["sdist"] == "chainlit-3.0.0.dev3+pr42.g0123456.tar.gz"
+    assert (
+        info["files"]["sdist"] == "chainlit_community-3.0.0.dev3+pr42.g0123456.tar.gz"
+    )
     # npm versions carry no build label.
     assert info["client_version"] == "0.5.0-dev.3"
 
@@ -267,8 +273,8 @@ def test_base_version_shapes(repo: Path, base: str, event: str, ref: str, local:
     version = info["version"]
     assert info["base_version"] == base
     assert version == f"{base}.dev3{local}"
-    assert info["files"]["wheel"] == f"chainlit-{version}-py3-none-any.whl"
-    assert info["files"]["sdist"] == f"chainlit-{version}.tar.gz"
+    assert info["files"]["wheel"] == f"chainlit_community-{version}-py3-none-any.whl"
+    assert info["files"]["sdist"] == f"chainlit_community-{version}.tar.gz"
     # Valid, and already in the normalized form build tools put in file names.
     assert str(Version(base)) == base
     assert str(Version(version)) == version
@@ -636,7 +642,569 @@ def test_finalize_rejects_a_missing_asset(
 def test_finalize_rejects_an_unexpected_asset(
     dist: Path, capsys: pytest.CaptureFixture
 ):
-    (dist / "chainlit-3.0.0-py3-none-any.whl").write_bytes(b"stale")
+    (dist / "chainlit_community-3.0.0-py3-none-any.whl").write_bytes(b"stale")
 
     assert ci_version.main(["finalize", "--dist", str(dist)]) == 1
-    assert "chainlit-3.0.0-py3-none-any.whl" in capsys.readouterr().err
+    assert "chainlit_community-3.0.0-py3-none-any.whl" in capsys.readouterr().err
+
+
+# --- Official releases -------------------------------------------------------
+
+DISPATCH = "workflow_dispatch"
+MAIN = "refs/heads/main"
+CHANGELOG = """# Changelog
+
+## [Unreleased]
+
+### Added
+
+- Something new.
+
+## [2.12.0] - 2026-08-25
+
+### Fixed
+
+- Something old.
+"""
+
+
+def write_notes(
+    root: Path, version: str | None = None, changelog: str = CHANGELOG
+) -> None:
+    """The hand-written notes a release needs; a final also gets its file."""
+    if version is not None:
+        changelog = changelog.replace(
+            "## [Unreleased]",
+            f"## [Unreleased]\n\n- Next.\n\n## [{version}] - 2026-12-01",
+        )
+        notes = root / ci_version.RELEASE_NOTES_DIR / f"{version}.md"
+        notes.parent.mkdir(parents=True, exist_ok=True)
+        notes.write_text("# Upgrading\n\nRead this first.\n", encoding="utf-8")
+    (root / ci_version.CHANGELOG_FILE).write_text(changelog, encoding="utf-8")
+
+
+def release(repo: Path, version: str, index: str | None = "pypi", **kwargs) -> dict:
+    kwargs.setdefault("event", DISPATCH)
+    kwargs.setdefault("ref", MAIN)
+    return compute(repo, release_version=version, index=index, **kwargs)
+
+
+def test_distribution_name_matches_the_project_and_the_other_script():
+    root = SCRIPT.parents[1]
+    project = tomllib.loads((root / "backend" / "pyproject.toml").read_text("utf-8"))
+    spec = importlib.util.spec_from_file_location(
+        "release_notes_for_name", SCRIPT.with_name("release_notes.py")
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    release_notes = importlib.util.module_from_spec(spec)
+    # dataclasses resolves string annotations through sys.modules.
+    sys.modules[spec.name] = release_notes
+    try:
+        spec.loader.exec_module(release_notes)
+    finally:
+        del sys.modules[spec.name]
+
+    assert project["project"]["name"] == ci_version.DIST_NAME == "chainlit-community"
+    assert release_notes.DIST_NAME == ci_version.DIST_NAME
+    assert ci_version.DIST_FILE_PREFIX == "chainlit_community"
+    # The import package and the console script keep the upstream name.
+    assert project["project"]["scripts"] == {"chainlit": "chainlit.cli:cli"}
+    assert project["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "chainlit"
+    ]
+
+
+@pytest.mark.parametrize("version", ["3.0.0a0", "3.0.0b2", "3.0.0rc1"])
+@pytest.mark.parametrize(
+    ("index", "ref"),
+    [("pypi", MAIN), ("testpypi", MAIN), ("testpypi", "refs/heads/feature/x")],
+)
+def test_pre_release(repo: Path, version: str, index: str, ref: str):
+    write_notes(repo)
+
+    info = release(repo, version, index, ref=ref, run_id="123456789")
+
+    assert info == {
+        "version": version,
+        "client_version": "0.5.0-dev.3",
+        "base_version": "3.0.0",
+        "build_number": 3,
+        "sha": SHA,
+        "ref": ref,
+        "event": DISPATCH,
+        "pr_number": None,
+        "run_id": "123456789",
+        "files": {
+            "wheel": f"chainlit_community-{version}-py3-none-any.whl",
+            "sdist": f"chainlit_community-{version}.tar.gz",
+            "react_client": "chainlit-react-client-0.5.0-dev.3.tgz",
+        },
+    }
+    assert str(Version(version)) == version
+
+
+def test_final_release(repo: Path):
+    write_notes(repo, "3.0.0")
+
+    info = release(repo, "3.0.0")
+
+    assert info["version"] == info["base_version"] == "3.0.0"
+    assert info["files"]["wheel"] == "chainlit_community-3.0.0-py3-none-any.whl"
+    assert info["files"]["sdist"] == "chainlit_community-3.0.0.tar.gz"
+    # The react-client is not released this way; it is stamped as always.
+    assert info["client_version"] == "0.5.0-dev.3"
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "3.0.0.dev1",
+        "3.0.0rc1.dev1",
+        "3.0.0.post1",
+        "3.0.0+local",
+        "1!3.0.0",
+        "v3.0.0",
+        "3.0.0-rc1",
+        "3.0.0rc01",
+        "3.0.0.rc1",
+        "3.0.0RC1",
+        "3.0.0c1",
+        "3.0.0alpha1",
+        "3.0.0rc",
+        "03.0.0",
+        "3",
+        "3.0.0.0.0",
+        "3.0.0 ",
+        "3.0.0rc\u0664",
+        "main",
+    ],
+)
+def test_release_version_must_be_canonical(repo: Path, version: str):
+    write_notes(repo, "3.0.0")
+
+    with pytest.raises(ci_version.VersionError, match="not a canonical official"):
+        release(repo, version)
+
+
+@pytest.mark.parametrize(
+    "version", ["3.0.1", "2.12.1", "3.0.1rc1", "3.1.0", "4.0.0", "3.0", "3.0.0.0"]
+)
+def test_release_version_must_belong_to_the_base_version(repo: Path, version: str):
+    write_notes(repo, version)
+
+    with pytest.raises(ci_version.VersionError, match=r"is not 3\.0\.0 or one of"):
+        release(repo, version)
+
+
+@pytest.mark.parametrize("version", ["3.0.0rc1", "3.0.0rc2", "3.0.0"])
+def test_release_needs_a_final_base_version(repo: Path, version: str):
+    set_version(repo, "3.0.0rc1")
+    write_notes(repo, "3.0.0")
+
+    with pytest.raises(
+        ci_version.VersionError, match=r"holds the pre-release 3\.0\.0rc1"
+    ):
+        release(repo, version)
+
+
+@pytest.mark.parametrize(
+    "event", ["push", "pull_request", "release", "schedule", "workflow_run", "local"]
+)
+def test_release_needs_a_manual_run(repo: Path, event: str):
+    write_notes(repo)
+
+    with pytest.raises(ci_version.VersionError, match="only built by a manual run"):
+        release(repo, "3.0.0rc1", "testpypi", event=event)
+
+
+@pytest.mark.parametrize(
+    "ref", ["refs/heads/release", "refs/heads/main2", "refs/heads/feature/main"]
+)
+def test_pypi_releases_only_from_main(repo: Path, ref: str):
+    write_notes(repo)
+
+    with pytest.raises(
+        ci_version.VersionError, match="only built from refs/heads/main"
+    ):
+        release(repo, "3.0.0rc1", "pypi", ref=ref)
+    assert release(repo, "3.0.0rc1", "testpypi", ref=ref)["version"] == "3.0.0rc1"
+
+
+@pytest.mark.parametrize("ref", ["refs/tags/3.0.0rc1", "refs/pull/42/merge", ""])
+@pytest.mark.parametrize("index", ["pypi", "testpypi"])
+def test_release_needs_a_branch(repo: Path, ref: str, index: str):
+    write_notes(repo)
+
+    with pytest.raises(ci_version.VersionError, match="built from a branch"):
+        release(repo, "3.0.0rc1", index, ref=ref)
+
+
+def test_release_for_a_pull_request_is_rejected(repo: Path):
+    write_notes(repo)
+
+    with pytest.raises(ci_version.VersionError, match="pull request"):
+        release(repo, "3.0.0rc1", "testpypi", pr_number="42")
+
+
+@pytest.mark.parametrize("index", [None, "", "PyPI", "npm", "https://pypi.org"])
+def test_release_needs_a_known_index(repo: Path, index: str | None):
+    write_notes(repo)
+
+    with pytest.raises(ci_version.VersionError, match="--index testpypi or pypi"):
+        release(repo, "3.0.0rc1", index)
+
+
+@pytest.mark.parametrize("index", ["pypi", "testpypi"])
+def test_index_without_a_release_version_is_rejected(repo: Path, index: str):
+    with pytest.raises(ci_version.VersionError, match="only applies to a release"):
+        compute(repo, "push", MAIN, index=index)
+
+
+@pytest.mark.parametrize("annotated", [False, True])
+def test_release_of_an_existing_tag_is_rejected(repo: Path, annotated: bool):
+    write_notes(repo)
+    git(repo, "tag", *(("-a", "-m", "rc") if annotated else ()), "3.0.0rc1")
+    commit(repo)
+
+    with pytest.raises(ci_version.VersionError, match=r"Tag 3\.0\.0rc1 already exists"):
+        release(repo, "3.0.0rc1")
+
+
+def test_final_release_fails_once_its_tag_exists(repo: Path, capsys):
+    """Stricter than the preview guard, which lets the tagged commit through."""
+    write_notes(repo, "3.0.0")
+    assert release(repo, "3.0.0")["version"] == "3.0.0"
+
+    git(repo, "tag", "3.0.0")  # on HEAD itself
+
+    assert compute(repo, "push", MAIN)["version"] == "3.0.0.dev3"
+    with pytest.raises(ci_version.VersionError, match=r"Tag 3\.0\.0 already exists"):
+        release(repo, "3.0.0")
+    with pytest.raises(ci_version.VersionError, match="does not sort above"):
+        release(repo, "3.0.0rc1")
+    assert "::warning::" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("tags", "version"),
+    [
+        (["3.0.0rc2"], "3.0.0rc1"),
+        (["3.0.0rc1"], "3.0.0b9"),
+        (["3.0.0b1"], "3.0.0a5"),
+        (["3.0.0a10"], "3.0.0a9"),
+        (["3.0.0a1", "3.0.0rc1", "3.0.0b1"], "3.0.0b2"),
+        (["3.0.0"], "3.0.0rc1"),
+        (["3.0"], "3.0.0rc1"),
+        (["3.0.0.0"], "3.0.0"),
+    ],
+)
+def test_release_must_sort_above_existing_tags(repo: Path, tags: list, version: str):
+    write_notes(repo, "3.0.0")
+    for tag in tags:
+        git(repo, "tag", tag)
+
+    with pytest.raises(ci_version.VersionError, match="does not sort above"):
+        release(repo, version)
+
+
+@pytest.mark.parametrize(
+    ("tags", "version"),
+    [
+        ([], "3.0.0a0"),
+        (["3.0.0a0"], "3.0.0a1"),
+        (["3.0.0a9"], "3.0.0a10"),
+        (["3.0.0a9", "3.0.0b0"], "3.0.0rc0"),
+        (["3.0.0rc1", "3.0.0rc2"], "3.0.0rc3"),
+        (["3.0.0rc2"], "3.0.0"),
+        # Previews, other releases and anything that is not a version.
+        (["3.0.0.dev123", "3.0.0rc1.dev5", "3.0.0.dev9999"], "3.0.0a0"),
+        (["2.12.0", "2.12.1rc1", "3.0.1", "3.1.0rc9", "4.0.0"], "3.0.0rc1"),
+        (["v3.0.0", "3.0.0-rc5", "3.0.0.post1", "release-3.0.0", "3.0.0rc"], "3.0.0b1"),
+    ],
+)
+def test_release_ignores_unrelated_tags(repo: Path, tags: list, version: str):
+    write_notes(repo, "3.0.0")
+    for tag in tags:
+        git(repo, "tag", tag)
+
+    assert release(repo, version)["version"] == version
+
+
+def test_release_needs_git_to_list_tags(repo: Path, monkeypatch: pytest.MonkeyPatch):
+    write_notes(repo)
+    real = ci_version.git
+    monkeypatch.setattr(
+        ci_version,
+        "git",
+        lambda root, *args: None if args[0] == "tag" else real(root, *args),
+    )
+
+    with pytest.raises(ci_version.VersionError, match="list the git tags"):
+        release(repo, "3.0.0rc1")
+
+
+OFFICIAL_VERSIONS = [
+    "3.0.0a0",
+    "3.0.0a1",
+    "3.0.0a10",
+    "3.0.0b0",
+    "3.0.0b2",
+    "3.0.0rc0",
+    "3.0.0rc1",
+    "3.0.0rc10",
+    "3.0.0",
+    "3.0",
+    "3.0.0.0",
+    "3.0.1a0",
+    "3.0.1",
+    "3.0.0.1rc1",
+    "3.0.0.1",
+    "3.1rc1",
+    "3.1",
+    "2.12.0",
+    "10.0.0b1",
+    "10.0",
+]
+
+
+@pytest.mark.parametrize("left", OFFICIAL_VERSIONS)
+@pytest.mark.parametrize("right", OFFICIAL_VERSIONS)
+def test_official_sort_key_agrees_with_packaging(left: str, right: str):
+    key = ci_version.official_sort_key
+
+    assert (key(left) < key(right)) == (Version(left) < Version(right))
+    assert (key(left) == key(right)) == (Version(left) == Version(right))
+    assert (key(left)[0] == key(right)[0]) == (
+        Version(left).base_version == Version(right).base_version
+        or Version(Version(left).base_version) == Version(Version(right).base_version)
+    )
+
+
+@pytest.mark.parametrize("version", ["3.0.0.dev1", "v3.0.0", "3.0.0-rc1", "", "3"])
+def test_official_sort_key_rejects_other_versions(version: str):
+    with pytest.raises(ValueError, match="not a canonical official version"):
+        ci_version.official_sort_key(version)
+
+
+def test_final_release_needs_its_notes_file(repo: Path):
+    write_notes(repo, "3.0.0")
+    notes = repo / "docs" / "releases" / "3.0.0.md"
+
+    notes.write_text(" \n\n", encoding="utf-8")
+    with pytest.raises(
+        ci_version.VersionError, match=r"docs/releases/3\.0\.0\.md is missing or empty"
+    ):
+        release(repo, "3.0.0")
+
+    notes.unlink()
+    (notes.parent / "3.0.0rc1.md").write_text("wrong file\n", encoding="utf-8")
+    with pytest.raises(
+        ci_version.VersionError, match=r"docs/releases/3\.0\.0\.md is missing or empty"
+    ):
+        release(repo, "3.0.0")
+
+
+def test_final_release_needs_its_changelog_section(repo: Path):
+    write_notes(repo, "3.0.0")
+    write_notes(repo)  # back to [Unreleased]
+
+    with pytest.raises(
+        ci_version.VersionError, match=r"CHANGELOG\.md has no '## \[3\.0\.0\]' section"
+    ):
+        release(repo, "3.0.0")
+
+    write_notes(
+        repo, changelog="# Changelog\n\n## [3.0.0] - 2026-12-01\n\n## [2.12.0]\n"
+    )
+    with pytest.raises(
+        ci_version.VersionError,
+        match=r"'## \[3\.0\.0\]' section of CHANGELOG\.md is empty",
+    ):
+        release(repo, "3.0.0")
+
+
+def test_pre_release_needs_unreleased_changes(repo: Path):
+    with pytest.raises(ci_version.VersionError, match=r"CHANGELOG\.md is missing"):
+        release(repo, "3.0.0rc1")
+
+    write_notes(repo, changelog="# Changelog\n\n## [3.0.0] - 2026-12-01\n\n- x\n")
+    with pytest.raises(
+        ci_version.VersionError, match=r"has no '## \[Unreleased\]' section"
+    ):
+        release(repo, "3.0.0rc1")
+
+    write_notes(
+        repo, changelog="# Changelog\n\n## [Unreleased]\n\n## [2.12.0]\n\n- x\n"
+    )
+    with pytest.raises(
+        ci_version.VersionError, match=r"'## \[Unreleased\]' section of .* is empty"
+    ):
+        release(repo, "3.0.0rc1")
+
+    # A pre-release needs no notes file.
+    write_notes(repo)
+    assert release(repo, "3.0.0rc1")["version"] == "3.0.0rc1"
+
+
+def test_changelog_section():
+    text = """# Changelog
+
+## [Unreleased]
+
+### Added
+
+- New.
+
+```md
+## [1.0.0] not a heading
+```
+
+~~~
+## neither
+```
+~~~
+
+## [3.0.0] - 2026-12-01
+
+- Final.
+
+## [3.0.0rc1]
+## [2.12.0] - 2026-08-25
+- Old.
+"""
+    section = ci_version.changelog_section
+
+    assert section(text, "Unreleased") == (
+        "### Added\n\n- New.\n\n```md\n## [1.0.0] not a heading\n```\n\n"
+        "~~~\n## neither\n```\n~~~"
+    )
+    assert section(text, "3.0.0") == "- Final."
+    assert section(text, "3.0.0rc1") == ""
+    assert section(text, "2.12.0") == "- Old."
+    assert section(text, "1.0.0") is None
+    assert section(text, "3.0") is None
+    assert section(text, "3.0.0rc") is None
+    assert section(text, "3x0x0") is None
+    assert section("## [3.0.0]extra\n- x\n", "3.0.0") is None
+    assert section("### [3.0.0]\n- x\n", "3.0.0") is None
+    assert section("", "Unreleased") is None
+
+
+def test_release_stamp_command(
+    repo: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    write_notes(repo)
+    commit(repo)
+    out = tmp_path_factory.mktemp("out")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out / "github_output"))
+    args = ("stamp", "--write", "--event", DISPATCH, "--ref", MAIN, "--sha", SHA)
+
+    code = run_main(
+        repo,
+        *args,
+        "--build-info",
+        str(out / "build-info.json"),
+        "--release-version",
+        "3.0.0rc1",
+        "--index",
+        "pypi",
+    )
+
+    assert code == 0
+    info = json.loads((out / "build-info.json").read_text())
+    assert list(info) == [
+        "version",
+        "client_version",
+        "base_version",
+        "build_number",
+        "sha",
+        "ref",
+        "event",
+        "pr_number",
+        "run_id",
+        "files",
+    ]
+    assert (info["version"], info["event"], info["ref"]) == ("3.0.0rc1", DISPATCH, MAIN)
+    assert info["pr_number"] is None
+    assert (repo / ci_version.VERSION_FILE).read_text() == '__version__ = "3.0.0rc1"\n'
+    assert (
+        '"version": "0.5.0-dev.4"'
+        in (repo / ci_version.CLIENT_PACKAGE_JSON).read_text()
+    )
+    assert (out / "github_output").read_text() == (
+        "version=3.0.0rc1\nclient_version=0.5.0-dev.4\n"
+    )
+
+
+def test_release_stamp_reads_the_environment(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    write_notes(repo)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", DISPATCH)
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/rehearsal")
+    monkeypatch.setenv("GITHUB_SHA", SHA)
+    monkeypatch.setenv("RELEASE_VERSION", "3.0.0b1")
+    monkeypatch.setenv("PUBLISH_INDEX", "testpypi")
+
+    assert run_main(repo, "stamp") == 0
+    assert json.loads(capsys.readouterr().out)["version"] == "3.0.0b1"
+
+    monkeypatch.setenv("PUBLISH_INDEX", "pypi")
+    assert run_main(repo, "stamp") == 1
+    assert "only built from refs/heads/main" in capsys.readouterr().err
+
+
+def test_empty_release_environment_is_a_normal_build(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    args = ("stamp", "--event", "push", "--ref", MAIN, "--sha", SHA)
+    assert run_main(repo, *args) == 0
+    expected = capsys.readouterr().out
+
+    monkeypatch.setenv("RELEASE_VERSION", "")
+    monkeypatch.setenv("PUBLISH_INDEX", "")
+    assert run_main(repo, *args) == 0
+    assert capsys.readouterr().out == expected
+    assert json.loads(expected)["version"] == "3.0.0.dev3"
+
+    monkeypatch.setenv("PUBLISH_INDEX", "pypi")
+    assert run_main(repo, *args) == 1
+    assert "only applies to a release" in capsys.readouterr().err
+
+
+def test_rejected_release_does_not_write(repo: Path, capsys: pytest.CaptureFixture):
+    write_notes(repo)
+    commit(repo)
+
+    code = run_main(
+        repo,
+        "stamp",
+        "--write",
+        "--event",
+        "push",
+        "--ref",
+        MAIN,
+        "--release-version",
+        "3.0.0rc1",
+        "--index",
+        "pypi",
+    )
+
+    assert code == 1
+    assert "only built by a manual run" in capsys.readouterr().err
+    assert git(repo, "status", "--porcelain") == ""
+
+
+def test_script_runs_isolated():
+    """Standalone and standard library only: `python3 -I` must be enough."""
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPT), "stamp", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "--release-version" in result.stdout
