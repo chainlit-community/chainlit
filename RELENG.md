@@ -1,65 +1,153 @@
 # Release Engineering Instructions
 
-This document outlines the steps for maintainers to create a new release of the project.
+This document is the runbook for maintainers who publish a version of the project.
 
-## Prerequisites
+There are two kinds of builds:
 
-- You must have maintainer permissions on the repo to create a new release.
+- **Official versions** (`3.0.0`, `3.0.0rc1`) are published by hand to [PyPI](https://pypi.org/project/chainlit-community/) as `chainlit-community`, with a GitHub release. The rest of this document is about these.
+- **[Preview builds](#preview-builds)** (`3.0.0.dev1234`) are published automatically to GitHub Releases for every commit on `main`. They need no maintainer action.
 
-## Steps
+## How publishing works
 
-1. **Determine the new version number**:
-   - We use semantic versioning (major.minor.patch).
-   - Increment the major version for breaking changes, minor version for new features, patch version for bug fixes only.
-   - If unsure, discuss with the maintainers to determine if it should be a major/minor version bump or new patch version.
+The distribution is called `chainlit-community`. The import package (`chainlit`) and the command (`chainlit`) keep their names.
 
-2. **Check the package version**:
-   - `main` carries the version of the _next_ release (see [Preview builds](#preview-builds)), so `version` in `backend/chainlit/version.py` should normally already be the version you are about to release. Update it only if step 1 came out differently, e.g. a breaking change was merged since the last bump.
-   - Update `version` in `libs/*/package.json` if there were any changes in the corresponding directories.
+Everything goes through one workflow, `.github/workflows/publish.yaml`, which is only ever started by hand:
 
-3. **Update the changelog**:
-   - Create a pull request to update the CHANGELOG.md file with the changes for the new release.
-   - Mark any breaking changes clearly.
-   - Get the changelog update PR reviewed and merged.
+- GitHub: **Actions → Publish → Run workflow**, or
+- CLI: `gh workflow run publish.yaml -f version=<V> -f index=<testpypi|pypi>`
 
-4. **Create a new release**:
-   - In the GitHub repo, go to the "Releases" page and click "Draft a new release".
-   - Input the new version number as the tag (e.g. 4.0.4).
-   - Use the "Generate release notes" button to auto-populate the release notes from the changelog.
-   - Review the release notes, make any needed edits for clarity.
-   - If this is a full release after an RC, remove the `rcN` suffix from the version number.
-   - Publish the release.
+| Input     | Value                                                                          |
+| --------- | ------------------------------------------------------------------------------ |
+| `version` | The version to publish, typed in full (see [Versions](#versions)).             |
+| `index`   | `testpypi` (default) for a rehearsal, `pypi` for the real thing (`main` only). |
 
-5. **Update any associated documentation and examples**:
-   - If needed, create PRs to update the version referenced in the docs and example code to match the newly released version.
-   - Especially important for documented breaking changes.
+The run is titled "Publish `<version>` to `<index>`". It does the following, in order:
 
-6. **Bump `main` to the next version**:
-   - Straight after publishing, open a PR that sets `version` in `backend/chainlit/version.py` to the next release version (e.g. 3.0.1 after releasing 3.0.0).
-   - This is required, not optional: while a git tag equal to the version in `version.py` exists, builds of `main` fail, so no preview release is published (pull request builds only warn). See [Preview builds](#preview-builds).
+1. Checks the version and the branch, and for a final version that its release notes exist. Nothing is built if a check fails.
+2. Builds the wheel, the sdist and the `@chainlit/react-client` tarball with the version stamped at build time. Nothing is committed.
+3. Runs the full CI, including the E2E tests, on exactly the files that will be uploaded.
+4. Uploads the wheel and the sdist with PyPI trusted publishing. There are no API tokens. The upload job runs in the GitHub environment `pypi` or `testpypi`; the required reviewers of the `pypi` environment are the approval gate, so a run for PyPI waits there until a reviewer approves it.
+5. For `index=pypi` only: creates a **draft** GitHub release on the built commit, with the wheel, the sdist, the react-client tarball and `SHA256SUMS` attached, and build provenance attested. A maintainer reviews the notes and clicks **Publish release**; that creates the tag, which is the bare version (e.g. `3.0.0`). Alphas, betas and release candidates are marked as pre-release.
 
-## RC (Release Candidate) Releases
+A TestPyPI run stops after step 4: no tag, no release.
 
-- We create RC releases to allow testing before a full stable release
-- Append `rcN` to the version number, in the PEP 440 form used by the existing tags such as `2.4.0rc0` (e.g. `3.0.0rc1`, not `3.0.0-rc`). The build validates the version in `backend/chainlit/version.py` and fails on any other spelling.
-- Between RCs, bump `main` to the next RC (e.g. `3.0.0rc2`), not to the final version: under PEP 440 `3.0.0.dev1234` sorts below `3.0.0rc1`.
-- Normally only bug fixes, no new features, between an RC and the final release version
+### Versions
+
+- We use semantic versioning (major.minor.patch): major for breaking changes, patch for bug fixes only. If unsure, discuss with the other maintainers.
+- `version` in `backend/chainlit/version.py` on `main` always holds the next **final** version, e.g. `3.0.0`. It never holds a pre-release.
+- The version you type must be that version, or an alpha, beta or release candidate of it in PEP 440 form: `3.0.0a0`, `3.0.0b1`, `3.0.0rc1` (not `3.0.0-rc1`). `.dev` versions are refused; those are preview builds.
+- It must not already be tagged, and it must be higher than every official version of that release published before it (`3.0.0rc2` after `3.0.0rc1`, never the other way round).
+- `index=pypi` is only allowed from `main`. A TestPyPI rehearsal may run from any branch. Publishing from `release/**` backport branches is not supported yet.
+
+### Release notes
+
+- **Pre-release** (alpha, beta, RC): generated from the `[Unreleased]` section of `CHANGELOG.md`, followed by the install and verify instructions. Edit them in the draft if needed.
+- **Final**: written beforehand, in a release PR (see [Publish a final release](#publish-a-final-release)). The body of the draft is the upgrade guide `docs/releases/<V>.md`, then the `[<V>]` section of `CHANGELOG.md`, then the install and verify instructions. The workflow refuses a final version if either the guide or the changelog section is missing.
+
+## Publish a pre-release
+
+Pre-releases need no commits and no pull request. Between an RC and the final version, normally only bug fixes are merged.
+
+1. Pick the next pre-release of the version in `version.py`, e.g. `3.0.0rc1`.
+2. Optional: [rehearse on TestPyPI](#rehearse-on-testpypi) first.
+3. On `main`, run the workflow: `gh workflow run publish.yaml -f version=3.0.0rc1 -f index=pypi`.
+4. When CI has passed, the run waits for the `pypi` environment. A required reviewer approves it; the files are then uploaded to PyPI.
+5. Open the draft on the [Releases page](https://github.com/chainlit-community/chainlit/releases), check that it is marked as pre-release, edit the notes if needed and click **Publish release**.
+6. [Verify](#verify-a-published-release) the published version.
+
+## Publish a final release
+
+1. **Open the release PR.** It contains:
+   - `CHANGELOG.md`: the entries of `[Unreleased]` moved into a new `## [<V>] - <date>` section, breaking changes marked clearly. Leave an empty `## [Unreleased]` heading in place.
+   - `docs/releases/<V>.md`: the upgrade guide. An AI agent drafts it from the changelog and the commits since the last final release; a maintainer verifies it. See [docs/releases/README.md](docs/releases/README.md) for the required structure and the checklist.
+   - If the version in `version.py` is not the one you are releasing (e.g. a breaking change was merged since the last bump), the corrected version.
+   - `version` in `libs/*/package.json`, if those packages changed and the version was not bumped yet.
+2. **Get the release PR reviewed and merged.**
+3. **Run the workflow** on `main`: `gh workflow run publish.yaml -f version=<V> -f index=pypi`.
+4. **Approve the upload.** When CI has passed, the run waits for the `pypi` environment. Once a required reviewer approves, the version is on PyPI and cannot be changed.
+5. **Review the draft release.** Read the notes as rendered, fix what needs fixing and click **Publish release**. This creates the tag.
+6. **[Verify](#verify-a-published-release)** the published version.
+7. **Open the bump PR straight away.** Set `version` in `backend/chainlit/version.py` to the next version (e.g. `3.0.1` after `3.0.0`). This is required, not optional: while a tag equal to the version in `version.py` exists, builds of `main` fail, so no preview build is published (pull request builds only warn).
+8. If needed, open PRs to update the version referenced in documentation and example code.
+
+## Rehearse on TestPyPI
+
+A rehearsal runs everything up to and including the upload, against [test.pypi.org](https://test.pypi.org/project/chainlit-community/). It needs no approval and may run from any branch, which makes it the way to test changes to the workflow itself.
+
+1. Pick a throwaway alpha that will never be published for real, e.g. `3.0.0a0`. Each rehearsal uses up its version on TestPyPI, so the next one needs `3.0.0a1`, and so on.
+2. Run the workflow: `gh workflow run publish.yaml --ref <branch> -f version=3.0.0a0 -f index=testpypi`.
+3. Check the result in a fresh virtual environment. TestPyPI does not have the dependencies, so those come from PyPI:
+
+   ```sh
+   pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ chainlit-community==3.0.0a0
+   chainlit --version
+   ```
+
+## Verify a published release
+
+In a fresh virtual environment, replacing `<V>`:
+
+```sh
+pip install chainlit-community==<V>
+chainlit --version
+```
+
+Then check the files of the GitHub release against their checksums and their build provenance:
+
+```sh
+gh release download <V> -R chainlit-community/chainlit
+sha256sum --ignore-missing -c SHA256SUMS
+gh attestation verify chainlit_community-<V>-py3-none-any.whl -R chainlit-community/chainlit
+```
+
+To check that PyPI serves the same wheel, download it into the same directory and run the checksum again:
+
+```sh
+pip download --no-deps chainlit-community==<V>
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+## Recovery
+
+A version uploaded to PyPI or TestPyPI can never be uploaded again, not even after deleting it. Everything below follows from that.
+
+| What happened                                              | What to do                                                                                                                                                                        |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A check or CI failed before the upload                     | Fix the cause and run the workflow again with the same version.                                                                                                                   |
+| A flaky job failed                                         | Use **Re-run failed jobs**. Never use **Re-run all jobs** once an upload has happened: it would build different files under a version that already exists.                        |
+| The upload succeeded, the release job failed               | Use **Re-run failed jobs**.                                                                                                                                                       |
+| The version is burned (partial or incorrect upload)        | Yank it on PyPI and publish the next one: the next `rcN` for a pre-release, the next patch version for a final (which needs its own bump of `version.py` and its own release PR). |
+| The draft release is wrong, but the files on PyPI are fine | Edit the draft; nothing needs to be rebuilt.                                                                                                                                      |
+
+## One-time setup
+
+This is already in place, except where marked. It is listed so that it can be checked or redone.
+
+| Where               | What                                                                                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub environments | `pypi`: required reviewers, deployment branch `main`. `testpypi`: no reviewers, any branch.                                                                                |
+| pypi.org            | Trusted publisher: project `chainlit-community`, owner `chainlit-community`, repository `chainlit`, workflow `publish.yaml`, environment `pypi`. **To be registered.**     |
+| test.pypi.org       | Trusted publisher: project `chainlit-community`, owner `chainlit-community`, repository `chainlit`, workflow `publish.yaml`, environment `testpypi`. **To be registered.** |
+
+Until the first upload, the trusted publisher is a _pending_ publisher. A pending publisher does not reserve the project name: if someone else registers `chainlit-community` first, the pending publisher stops working.
+
+`@chainlit/react-client` is not published to npm by this fork yet. `.github/workflows/publish-libs.yaml` is inert until that is set up; for now the package is distributed as a tarball attached to GitHub releases.
 
 ## Preview builds
 
-Preview builds are automatic and need no maintainer action. They are separate from the release process above and do not publish to PyPI or npm.
+Preview builds are automatic and need no maintainer action. They are separate from the release process above and are not published to PyPI or npm.
 
 **One build per CI run.** `.github/workflows/build.yaml` (called from `ci.yaml`) builds the wheel and sdist and packs `@chainlit/react-client`, then uploads one workflow artifact named `dist`:
 
-- `chainlit-<version>-py3-none-any.whl`
-- `chainlit-<version>.tar.gz`
+- `chainlit_community-<version>-py3-none-any.whl`
+- `chainlit_community-<version>.tar.gz`
 - `chainlit-react-client-<client-version>.tgz`
 - `SHA256SUMS`
 - `build-info.json`
 
 The E2E tests install that wheel instead of building their own, so they test the files that ship.
 
-**Versioning.** `backend/chainlit/version.py` on `main` holds the version of the next release. `scripts/ci_version.py` stamps the build version in CI only; nothing is committed. `N` is the commit count (`git rev-list --count HEAD`).
+**Versioning.** `backend/chainlit/version.py` on `main` holds the next final version. `scripts/ci_version.py` stamps the build version in CI only; nothing is committed. `N` is the commit count (`git rev-list --count HEAD`).
 
 | Build        | Version                            | Example                       |
 | ------------ | ---------------------------------- | ----------------------------- |
@@ -69,7 +157,9 @@ The E2E tests install that wheel instead of building their own, so they test the
 
 Under PEP 440, `3.0.0.dev1234` sorts above `2.12.0` and below `3.0.0`, so a preview build is never mistaken for the release it precedes.
 
-The same holds while `version.py` holds a release candidate: `3.0.0rc1` builds as `3.0.0rc1.dev1234`, which sorts below `3.0.0rc1`. A react-client pre-release gets `.dev.<N>` appended instead, e.g. `0.6.0-rc.1.dev.1234`.
+It also sorts below `3.0.0rc1`, so a preview build made after a release candidate has a lower version than that candidate. This is harmless: preview builds are only ever installed by URL, never resolved by version.
+
+If the react-client `package.json` holds a pre-release, `.dev.<N>` is appended instead, e.g. `0.6.0-rc.1.dev.1234`.
 
 **Pull requests.** When CI finishes on a pull request, `.github/workflows/pr-build-comment.yaml` posts (or updates) one comment on the PR with the build version and the commands to download the `dist` artifact and install the wheel. Workflow artifacts need a GitHub login to download, and they expire.
 
@@ -83,7 +173,7 @@ To verify a download:
 
 ```sh
 sha256sum --ignore-missing -c SHA256SUMS
-gh attestation verify chainlit-<version>-py3-none-any.whl -R chainlit-community/chainlit
+gh attestation verify chainlit_community-<version>-py3-none-any.whl -R chainlit-community/chainlit
 ```
 
 **Re-running.** If the preview release for a commit failed or needs to be redone, run `.github/workflows/preview-release.yaml` manually (`workflow_dispatch`) and pass the `run_id` of the CI run whose build you want to publish.

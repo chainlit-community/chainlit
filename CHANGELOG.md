@@ -10,9 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Preview builds. Every commit on `main` that passes CI is published as a pre-release on [GitHub Releases](https://github.com/chainlit-community/chainlit/releases), versioned `<next version>.dev<N>` (e.g. `3.0.0.dev1234`), with the wheel, the sdist, the `@chainlit/react-client` tarball, `SHA256SUMS` and build provenance attestations. The wheel includes the built frontend, so it installs by URL without Node or pnpm; see [Installation](README.md#installation). Preview builds are not published to PyPI or npm.
 - Every pull request gets a downloadable build of the same files as a workflow artifact, with a comment on the pull request explaining how to install it.
+- Official versions are published by hand with a single workflow, `.github/workflows/publish.yaml`: to PyPI with trusted publishing (no API tokens, gated by the reviewers of the `pypi` GitHub environment) and as a GitHub release with the wheel, the sdist, the `@chainlit/react-client` tarball, `SHA256SUMS` and build provenance attestations. The full CI, including the E2E tests, runs on exactly the files that are uploaded. Alphas, betas and release candidates (`3.0.0rc1`) need no commit, and a rehearsal can be run against TestPyPI. See [RELENG.md](RELENG.md).
+- Final releases come with a hand-checked upgrade guide in [`docs/releases/`](docs/releases/README.md), which is also the first part of the release notes.
 
 ### Changed
 
+- **Breaking:** the distribution is renamed to `chainlit-community` on PyPI. The import package and the command are unchanged: you still `import chainlit` and run `chainlit`. To migrate:
+  - Uninstall the original distribution first: `pip uninstall chainlit`. Both distributions provide the `chainlit` import package, so when both are installed they overwrite each other's files.
+  - Install the new one: `pip install chainlit-community` (`uv add chainlit-community`, `poetry add chainlit-community`).
+  - Replace `chainlit` by `chainlit-community` in `requirements.txt`, `pyproject.toml` and lock files, including extras: `chainlit[custom-data]` becomes `chainlit-community[custom-data]`.
+  - Third-party packages that depend on `chainlit` still pull in the unmaintained original alongside `chainlit-community`; `pip show chainlit` shows whether it is installed and what requires it.
+  - The files are now named `chainlit_community-<version>-py3-none-any.whl` and `chainlit_community-<version>.tar.gz`, for preview builds too. Update any URL or script that refers to `chainlit-<version>...`.
 - The version in `backend/chainlit/version.py` is now `3.0.0`, the next release, because breaking changes have already been merged. CI derives the version of each build from it.
 - `@chainlit/react-client` is now version `0.6.0`, the next release of the package, so that its preview builds (`0.6.0-dev.<N>`) sort above the `0.5.0` already on npm.
 
