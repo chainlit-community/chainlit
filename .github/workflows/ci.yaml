@@ -13,7 +13,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 
-permissions: read-all
+# Least privilege: jobs that need more ask for it themselves. Workflows that
+# call this one (publish.yaml, publish-libs.yaml) must grant what the attest
+# job asks for, because a called workflow cannot hold more than its caller.
+permissions:
+  contents: read
 
 jobs:
   check-backend:
@@ -25,14 +29,45 @@ jobs:
   tests:
     uses: ./.github/workflows/tests.yaml
     secrets: inherit
+  build:
+    uses: ./.github/workflows/build.yaml
   e2e-tests:
+    # Tests the wheel from the `dist` artifact uploaded by the build job.
+    needs: [build]
     uses: ./.github/workflows/e2e-tests.yaml
     secrets: inherit
+  attest:
+    # Build provenance for the distributions that preview-release.yaml
+    # publishes. It is signed here, in the run that built them, so that it
+    # names the commit they were built from. Only for builds of main that
+    # passed every check; this job never runs build code.
+    name: Attest build provenance
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'chainlit-community/chainlit'
+    needs: [check-backend, check-frontend, tests, build, e2e-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Sigstore signing certificate for the attestation
+      attestations: write # store the attestation
+    steps:
+      - name: Download the distributions built for this run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Verify checksums
+        run: sha256sum --check --strict SHA256SUMS
+        working-directory: dist
+      # One attestation whose subjects are exactly the files in SHA256SUMS.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
   ci:
     runs-on: ubuntu-slim
     name: Run CI
     if: always() # This ensures the job always runs
-    needs: [check-backend, check-frontend, tests, e2e-tests]
+    needs: [check-backend, check-frontend, tests, build, e2e-tests, attest]
     steps:
       # Propagate failure
       - name: Check dependent jobs
