@@ -402,6 +402,41 @@ class TestMessage:
             ctx.emitter.stream_start.assert_not_called()
 
 
+class TestMessageSleep:
+    """Creating messages must not block the event loop.
+
+    `time.sleep` is patched globally on purpose: no blocking sleep of any kind
+    may run on these paths.
+    """
+
+    def test_from_dict_many_steps_does_not_sleep(self):
+        """Rebuilding a long history (as on chat resume) never sleeps."""
+        types = ["user_message", "assistant_message", "system_message"]
+        steps = [
+            {
+                "id": f"msg_{i}",
+                "createdAt": f"2024-01-01T00:00:00.{i:06d}Z",
+                "output": f"content {i}",
+                "type": types[i % 3],
+            }
+            for i in range(1000)
+        ]
+
+        with mock_chainlit_context(), patch("time.sleep") as mock_sleep:
+            messages = [MessageBase.from_dict(step) for step in steps]
+
+        mock_sleep.assert_not_called()
+        assert [m.created_at for m in messages] == [s["createdAt"] for s in steps]
+        assert [m.type for m in messages] == [s["type"] for s in steps]
+
+    def test_message_init_does_not_sleep(self):
+        """Creating a message never sleeps."""
+        with mock_chainlit_context(), patch("time.sleep") as mock_sleep:
+            Message(content="x")
+
+        mock_sleep.assert_not_called()
+
+
 class TestErrorMessage:
     """Test suite for ErrorMessage class."""
 

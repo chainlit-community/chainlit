@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-## [3.0.0] - 2026-11-23
+## [3.0.0] - 2026-11-24
 
 ### Added
 
@@ -46,6 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The chat profile selector and the message feedback buttons no longer crash with "Rendered fewer hooks than expected" when the number of chat profiles or the feedback setting changes between renders.
 - A `config.toml` whose `[meta]` section has no `generated_by` key now gives the intended "config file is outdated" error instead of a `TypeError`.
 - When `CHAINLIT_ROOT_PATH` is set, the auth cookies are set and cleared with that path. Its value used to be looked up as the name of another environment variable, so the path was always `/` and stale cookie chunks were not removed on logout or token refresh. `CHAINLIT_AUTH_COOKIE_PATH` now applies when the auth cookie is set, not only when it is cleared.
+- Resuming a conversation with many messages no longer freezes the server: rebuilding the history blocked every other request and websocket for 1–2 ms per stored message. Creating a message no longer blocks the server briefly either. Messages sent back to back can now share the same millisecond, so a custom data layer that stores timestamps at millisecond precision should add a tiebreaker when it orders steps.
 
 ### Removed
 
