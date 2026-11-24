@@ -253,3 +253,71 @@ def test_cookie_oauth_generates_openapi_security_scheme():
         "type": "oauth2",
         "flows": {"password": {"scopes": {}, "tokenUrl": "/login"}},
     }
+
+
+def _set_cookie_headers(func, cookie_header: str, *args) -> list[str]:
+    """Call a cookie helper on a request carrying ``cookie_header``."""
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/myapp/auth/logout",
+            "headers": [(b"cookie", cookie_header.encode())],
+        }
+    )
+    response = Response()
+    func(request, response, *args)
+    return [
+        value.decode() for name, value in response.raw_headers if name == b"set-cookie"
+    ]
+
+
+def _deletions(headers: list[str], path: str) -> set[str]:
+    return {
+        h.split("=", 1)[0]
+        for h in headers
+        if f"Path={path};" in h + ";" and "Max-Age=0" in h
+    }
+
+
+# The browser of a user who logged in before 3.0.0 holds a cookie at "/" next to
+# the one at the configured path, and sends the more specific one first.
+_LEGACY_COOKIES = "access_token=NEW; access_token=OLD; access_token_0=OLDCHUNK"
+
+
+def test_legacy_cookie_wins_without_cleanup():
+    """Why the cleanup exists: Starlette keeps the last duplicate."""
+    from starlette.requests import cookie_parser
+
+    assert cookie_parser(_LEGACY_COOKIES)["access_token"] == "OLD"
+
+
+def test_clear_auth_cookie_removes_legacy_root_path_cookies(monkeypatch):
+    monkeypatch.setattr(cookie_module, "_cookie_path", "/myapp")
+
+    headers = _set_cookie_headers(clear_auth_cookie, _LEGACY_COOKIES)
+
+    assert _deletions(headers, "/myapp") == {"access_token", "access_token_0"}
+    assert _deletions(headers, "/") == {"access_token", "access_token_0"}
+
+
+def test_set_auth_cookie_removes_legacy_root_path_cookies(monkeypatch):
+    monkeypatch.setattr(cookie_module, "_cookie_path", "/myapp")
+
+    headers = _set_cookie_headers(set_auth_cookie, _LEGACY_COOKIES, "x" * 100)
+
+    assert any(
+        h.startswith("access_token=" + "x" * 100) and "Path=/myapp" in h
+        for h in headers
+    )
+    assert _deletions(headers, "/myapp") == {"access_token_0"}
+    assert _deletions(headers, "/") == {"access_token", "access_token_0"}
+
+
+def test_no_legacy_cleanup_when_cookie_path_is_root(monkeypatch):
+    monkeypatch.setattr(cookie_module, "_cookie_path", "/")
+
+    headers = _set_cookie_headers(clear_auth_cookie, "access_token=x")
+
+    assert len(headers) == 1
+    assert _deletions(headers, "/") == {"access_token"}

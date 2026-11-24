@@ -33,6 +33,12 @@ _state_cookie_lifetime = int(
     os.environ.get("CHAINLIT_STATE_COOKIE_LIFETIME", str(3 * 60))
 )
 _auth_cookie_name = os.environ.get("CHAINLIT_AUTH_COOKIE_NAME", "access_token")
+# Up to 2.12.0 the auth cookies were always set with this path, whatever the
+# configured one. Where the configured path differs, browsers keep sending such
+# a cookie next to the current one, and Starlette keeps the last of two cookies
+# with the same name, which is the one with the shorter path. So it is removed
+# whenever the auth cookies are set or cleared.
+_legacy_cookie_path = "/"
 _state_cookie_name = "oauth_state"
 
 
@@ -167,6 +173,8 @@ def set_auth_cookie(request: Request, response: Response, token: str):
             key=k, path=_cookie_path, secure=_cookie_secure, samesite=_cookie_samesite
         )
 
+    _delete_legacy_auth_cookies(request, response)
+
 
 def clear_auth_cookie(request: Request, response: Response):
     """
@@ -181,6 +189,24 @@ def clear_auth_cookie(request: Request, response: Response):
         response.delete_cookie(
             key=k, path=_cookie_path, secure=_cookie_secure, samesite=_cookie_samesite
         )
+
+    _delete_legacy_auth_cookies(request, response)
+
+
+def _delete_legacy_auth_cookies(request: Request, response: Response):
+    """Delete auth cookies left at the legacy path by a version before 3.0.0."""
+
+    if _cookie_path == _legacy_cookie_path:
+        return
+
+    for k in request.cookies.keys():
+        if k.startswith(_auth_cookie_name):
+            response.delete_cookie(
+                key=k,
+                path=_legacy_cookie_path,
+                secure=_cookie_secure,
+                samesite=_cookie_samesite,
+            )
 
 
 def set_oauth_state_cookie(response: Response, token: str):
