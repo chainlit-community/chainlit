@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Resuming a conversation with many messages no longer freezes the server: rebuilding the history blocked every other request and websocket for 1–2 ms per stored message. Creating a message no longer blocks the server briefly either. Messages sent back to back can now share the same millisecond, so a custom data layer that stores timestamps at millisecond precision should add a tiebreaker when it orders steps.
+
 ## [3.0.0] - 2026-11-23
 
 ### Added

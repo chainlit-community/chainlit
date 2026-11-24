@@ -1,8 +1,10 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from chainlit.message import Message
 from chainlit.session import WebsocketSession
 from chainlit.socket import (
     _authenticate_connection,
@@ -738,6 +740,36 @@ class TestConnectionSuccessfulResumeErrors:
 
         chat_context.add.assert_called_once_with(good)
         emitter.resume_thread.assert_awaited_once_with(thread)
+        emitter.send_resume_thread_error.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_long_history_does_not_sleep(self, mock_session_factory):
+        """Rebuilding a long history must not block the event loop per step."""
+        types = ["user_message", "assistant_message", "system_message"]
+        steps = [
+            {
+                "id": f"msg-{i}",
+                "createdAt": f"2024-01-01T00:00:00.{i:06d}Z",
+                "output": f"content {i}",
+                "type": types[i % 3],
+            }
+            for i in range(500)
+        ]
+        thread = {"id": "thread-1", "steps": steps}
+
+        with (
+            patch(
+                "chainlit.message.context",
+                SimpleNamespace(session=SimpleNamespace(thread_id="thread-1")),
+            ),
+            patch("time.sleep") as mock_sleep,
+        ):
+            emitter, _, chat_context = await self._connect(
+                mock_session_factory, AsyncMock(return_value=thread), Message
+            )
+
+        mock_sleep.assert_not_called()
+        assert chat_context.add.call_count == len(steps)
         emitter.send_resume_thread_error.assert_not_awaited()
 
     @pytest.mark.asyncio
