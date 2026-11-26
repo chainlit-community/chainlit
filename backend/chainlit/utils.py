@@ -27,12 +27,17 @@ def timestamp_utc(timestamp: float):
     return dt.isoformat() + "Z"
 
 
-def wrap_user_function(user_function: Callable, with_task=False) -> Callable:
+def wrap_user_function(
+    user_function: Callable, with_task=False, reraise=False
+) -> Callable:
     """
     Wraps a user-defined function to accept arguments as a dictionary.
 
     Args:
         user_function (Callable): The user-defined function to wrap.
+        reraise (bool): Let the user function's exceptions propagate to the
+            caller (which then handles and logs them) instead of logging
+            them and returning None.
 
     Returns:
         Callable: The wrapped function.
@@ -58,8 +63,11 @@ def wrap_user_function(user_function: Callable, with_task=False) -> Callable:
             else:
                 return user_function(**params_values)
         except CancelledError:
-            pass
+            if reraise:
+                raise
         except Exception as e:
+            if reraise:
+                raise
             logger.exception(e)
             if with_task:
                 from chainlit.message import ErrorMessage

@@ -748,6 +748,392 @@ def test_ask_file_with_spontaneous_upload_disabled(
     assert response.status_code == expected_status
 
 
+def _with_upload_feature(cfg: ChainlitConfig, **kwargs) -> ChainlitConfig:
+    """A copy of cfg as a chat profile's config_overrides would produce."""
+    from chainlit.config import ChainlitConfigOverrides, FeaturesSettings
+
+    return cfg.with_overrides(
+        ChainlitConfigOverrides(
+            features=FeaturesSettings(
+                spontaneous_file_upload=SpontaneousFileUploadFeature(**kwargs)
+            )
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("global_feature", "session_feature", "mime_type", "expected_status"),
+    [
+        # CVE-2026-110699: the profile disables uploads, the UI hides them
+        (dict(enabled=True), dict(enabled=False), "text/plain", 400),
+        # the profile enables what the global config disables
+        (dict(enabled=False), dict(enabled=True), "text/plain", 200),
+        # the profile's accept list applies
+        (
+            dict(enabled=True, accept=["*/*"]),
+            dict(enabled=True, accept=["image/*"]),
+            "text/html",
+            400,
+        ),
+        (
+            dict(enabled=True, accept=["*/*"]),
+            dict(enabled=True, accept=["image/*"]),
+            "image/png",
+            200,
+        ),
+    ],
+)
+def test_upload_file_uses_session_config(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    mock_session_get_by_id_patched: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    global_feature: dict,
+    session_feature: dict,
+    mime_type: str,
+    expected_status: int,
+):
+    """Uploads are validated against the session's config (with its chat
+    profile's overrides), not the global config."""
+    monkeypatch.setattr(
+        test_config.features,
+        "spontaneous_file_upload",
+        SpontaneousFileUploadFeature(**global_feature),
+    )
+    session_config = _with_upload_feature(test_config, **session_feature)
+    mock_session_get_by_id_patched.get_config = Mock(return_value=session_config)
+    mock_session_get_by_id_patched.persist_file = AsyncMock(
+        return_value={"id": "id", "name": "f", "type": mime_type, "size": 1}
+    )
+
+    response = test_client.post(
+        "/project/file",
+        files={"file": ("f", b"x", mime_type)},
+        params={"session_id": mock_session_get_by_id_patched.id},
+    )
+
+    assert response.status_code == expected_status
+
+
+def test_upload_file_size_uses_session_config(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    mock_session_get_by_id_patched: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        test_config.features,
+        "spontaneous_file_upload",
+        SpontaneousFileUploadFeature(enabled=True, max_size_mb=500),
+    )
+    mock_session_get_by_id_patched.get_config = Mock(
+        return_value=_with_upload_feature(test_config, enabled=True, max_size_mb=1)
+    )
+
+    response = test_client.post(
+        "/project/file",
+        files={"file": ("f.txt", b"1" * (1024 * 1024 + 1), "text/plain")},
+        params={"session_id": mock_session_get_by_id_patched.id},
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("stored_type", "expected_type", "expected_disposition"),
+    [
+        # rendered inline: no script can run from these
+        ("image/png", "image/png", "inline"),
+        ("IMAGE/JPEG", "image/jpeg", "inline"),
+        ("application/pdf", "application/pdf", "inline"),
+        ("text/plain", "text/plain; charset=utf-8", "inline"),
+        ("audio/mpeg", "audio/mpeg", "inline"),
+        ("video/mp4", "video/mp4", "inline"),
+        # downloads (CVE-2026-110699)
+        ("text/html", "text/html; charset=utf-8", "attachment"),
+        ("Text/HTML; charset=utf-8", "text/html; charset=utf-8", "attachment"),
+        # a well-formed charset is kept, so non-UTF-8 text decodes correctly
+        (
+            "text/plain; charset=iso-8859-1",
+            "text/plain; charset=iso-8859-1",
+            "inline",
+        ),
+        (
+            'text/plain; format=flowed; CHARSET="windows-1252"',
+            "text/plain; charset=windows-1252",
+            "inline",
+        ),
+        ("text/plain; charset=a,text/html", "text/plain; charset=utf-8", "inline"),
+        ("application/xhtml+xml", "application/xhtml+xml", "attachment"),
+        ("image/svg+xml", "image/svg+xml", "attachment"),
+        ("text/xml", "text/xml; charset=utf-8", "attachment"),
+        ("application/javascript", "application/javascript", "attachment"),
+        # XML-based, so possibly scriptable, despite the media prefix
+        ("video/x-evil+xml", "video/x-evil+xml", "attachment"),
+        ("audio/x-evil+xml", "audio/x-evil+xml", "attachment"),
+        # not a single type/subtype token: browsers may honour the last one
+        ("video/mp4, text/html", "application/octet-stream", "attachment"),
+        ("image/png,text/html", "application/octet-stream", "attachment"),
+        ("", "application/octet-stream", "attachment"),
+    ],
+)
+def test_get_file_serves_only_safe_types_inline(
+    test_client: TestClient,
+    mock_session_get_by_id_patched: Mock,
+    tmp_path: pathlib.Path,
+    mock_get_current_user: Mock,
+    stored_type: str,
+    expected_type: str,
+    expected_disposition: str,
+):
+    mock_get_current_user.return_value = mock_session_get_by_id_patched.user
+    stored = tmp_path / "stored"
+    stored.write_bytes(b"<html><script>alert(1)</script></html>")
+    mock_session_get_by_id_patched.files = {
+        "fid": {
+            "id": "fid",
+            "path": stored,
+            "name": "upload.bin",
+            "type": stored_type,
+            "size": 1,
+        }
+    }
+
+    response = test_client.get(
+        f"/project/file/fid?session_id={mock_session_get_by_id_patched.id}"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == expected_type
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-disposition"] == (
+        f'{expected_disposition}; filename="upload.bin"'
+    )
+
+
+def test_get_file_encodes_unsafe_filename(
+    test_client: TestClient,
+    mock_session_get_by_id_patched: Mock,
+    tmp_path: pathlib.Path,
+    mock_get_current_user: Mock,
+):
+    """The uploader picks the name: it must not break out of the header."""
+    mock_get_current_user.return_value = mock_session_get_by_id_patched.user
+    stored = tmp_path / "stored"
+    stored.write_bytes(b"x")
+    mock_session_get_by_id_patched.files = {
+        "fid": {
+            "id": "fid",
+            "path": stored,
+            "name": 'a"; inline\r\nX-Evil: 1 é.html',
+            "type": "text/html",
+            "size": 1,
+        }
+    }
+
+    response = test_client.get(
+        f"/project/file/fid?session_id={mock_session_get_by_id_patched.id}"
+    )
+
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment; filename*=utf-8''")
+    assert '"' not in disposition
+    assert "\r" not in disposition
+    assert "x-evil" not in response.headers
+
+
+def _locked_and_open_profiles(test_config: ChainlitConfig):
+    """`locked` (default) disables uploads, `open` keeps the global config."""
+    from chainlit.config import ChainlitConfigOverrides, FeaturesSettings
+    from chainlit.types import ChatProfile
+
+    profiles = [
+        ChatProfile(
+            name="locked",
+            markdown_description="",
+            default=True,
+            config_overrides=ChainlitConfigOverrides(
+                features=FeaturesSettings(
+                    spontaneous_file_upload=SpontaneousFileUploadFeature(enabled=False)
+                )
+            ),
+        ),
+        ChatProfile(name="open", markdown_description=""),
+    ]
+
+    async def set_chat_profiles(user, language):
+        return profiles
+
+    test_config.code.set_chat_profiles = set_chat_profiles
+    test_config.features.spontaneous_file_upload = SpontaneousFileUploadFeature(
+        enabled=True, accept=["*/*"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_enabled"),
+    [
+        ({}, False),  # no profile: the default one, like the session gets
+        ({"chat_profile": "unknown"}, False),
+        ({"chat_profile": "locked"}, False),
+        ({"chat_profile": "open"}, True),
+    ],
+)
+def test_project_settings_selects_profile_like_the_session(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    params: dict,
+    expected_enabled: bool,
+):
+    """The UI is shown the config the backend enforces for the session."""
+    _locked_and_open_profiles(test_config)
+
+    response = test_client.get("/project/settings", params=params)
+
+    assert response.status_code == 200
+    features = response.json()["features"]
+    assert features["spontaneous_file_upload"]["enabled"] is expected_enabled
+
+
+@pytest.mark.parametrize(
+    ("chat_profile", "expected_status"),
+    [("locked", 400), (None, 400), ("unknown", 400), ("open", 200)],
+)
+def test_upload_through_real_socket_session(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    mock_get_current_user: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    chat_profile,
+    expected_status: int,
+):
+    """End to end: the socket connect handler creates the session, then the
+    REST upload is validated against that session's profile config
+    (CVE-2026-110699)."""
+    import asyncio
+    import uuid
+
+    from chainlit.session import WebsocketSession, ws_sessions_id, ws_sessions_sid
+    from chainlit.socket import connect
+
+    _locked_and_open_profiles(test_config)
+    mock_get_current_user.return_value = None
+    monkeypatch.setattr("chainlit.socket.require_login", lambda: False)
+    monkeypatch.setattr("chainlit.config.FILES_DIRECTORY", tmp_path)
+    session_id = str(uuid.uuid4())
+    auth = {
+        "sessionId": session_id,
+        "clientType": "webapp",
+        "chatProfile": chat_profile,
+    }
+
+    assert asyncio.run(connect("sid-" + session_id, {}, auth)) is True
+    session = WebsocketSession.get_by_id(session_id)
+    try:
+        assert session is not None
+        response = test_client.post(
+            "/project/file",
+            files={"file": ("login.html", b"<form>", "text/html")},
+            params={"session_id": session_id},
+        )
+        assert response.status_code == expected_status
+    finally:
+        ws_sessions_id.pop(session_id, None)
+        ws_sessions_sid.pop("sid-" + session_id, None)
+
+
+@pytest.mark.parametrize(
+    ("ask_parent_id", "expected_status"),
+    [
+        (None, 400),  # spontaneous: rejected, as the UI offers no upload
+        ("mocked_parent_id", 200),  # AskFileMessage: its own spec applies
+    ],
+)
+def test_upload_without_spontaneous_upload_section(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    mock_session_get_by_id_patched: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    ask_parent_id,
+    expected_status: int,
+):
+    """No [features.spontaneous_file_upload] section: the web UI and copilot
+    hide uploads, so the backend refuses them too (CVE-2026-110699)."""
+    monkeypatch.setattr(test_config.features, "spontaneous_file_upload", None)
+    mock_session_get_by_id_patched.files_spec = {
+        "mocked_parent_id": AskFileSpec(
+            step_id="s",
+            timeout=1,
+            type="file",
+            accept=["text/plain"],
+            max_files=1,
+            max_size_mb=1,
+        )
+    }
+    mock_session_get_by_id_patched.persist_file = AsyncMock(
+        return_value={"id": "id", "name": "f.txt", "type": "text/plain", "size": 1}
+    )
+    params = {"session_id": mock_session_get_by_id_patched.id}
+    if ask_parent_id:
+        params["ask_parent_id"] = ask_parent_id
+
+    response = test_client.post(
+        "/project/file", files={"file": ("f.txt", b"x", "text/plain")}, params=params
+    )
+
+    assert response.status_code == expected_status
+
+
+def test_connect_refused_when_chat_profiles_callback_raises(
+    test_config: ChainlitConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A client can make a callback raise through its Accept-Language; the
+    session must not then fall back to the global config and escape the
+    profile's upload restriction."""
+    import asyncio
+    import uuid
+
+    from chainlit.callbacks import set_chat_profiles
+    from chainlit.session import WebsocketSession
+    from chainlit.socket import connect
+
+    _locked_and_open_profiles(test_config)
+    profiles_by_language = {"en-US": test_config.code.set_chat_profiles}
+
+    @set_chat_profiles
+    async def profiles(user, language):
+        return await profiles_by_language[language](user, language)
+
+    monkeypatch.setattr("chainlit.socket.require_login", lambda: False)
+    session_id = str(uuid.uuid4())
+    auth = {"sessionId": session_id, "clientType": "webapp", "chatProfile": "locked"}
+
+    with pytest.raises(ConnectionRefusedError, match="chat profile"):
+        asyncio.run(connect("sid", {"HTTP_ACCEPT_LANGUAGE": "zz"}, auth))
+
+    assert WebsocketSession.get_by_id(session_id) is None
+
+
+def test_project_settings_degrades_when_chat_profiles_callback_raises(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+):
+    """As before the fix: no profiles and the global features (the
+    websocket connection is refused instead)."""
+    from chainlit.callbacks import set_chat_profiles
+
+    @set_chat_profiles
+    async def profiles(user, language):
+        raise RuntimeError("boom")
+
+    response = test_client.get("/project/settings")
+
+    assert response.status_code == 200
+    assert response.json()["chatProfiles"] == []
+
+
 def test_project_translations_file_path_traversal(
     test_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):

@@ -15,6 +15,9 @@ from chainlit.session import (
     WebsocketSession,
     clean_metadata,
     is_valid_session_id,
+    parse_accept_language,
+    resolve_session_config,
+    select_chat_profile,
 )
 
 
@@ -824,3 +827,443 @@ class TestMcpSession:
 
         assert stop.is_set()
         assert task.done()
+
+
+def _upload_override(enabled: bool):
+    from chainlit.config import (
+        ChainlitConfigOverrides,
+        FeaturesSettings,
+        SpontaneousFileUploadFeature,
+    )
+
+    return ChainlitConfigOverrides(
+        features=FeaturesSettings(
+            spontaneous_file_upload=SpontaneousFileUploadFeature(enabled=enabled)
+        )
+    )
+
+
+class TestParseAcceptLanguage:
+    @pytest.mark.parametrize(
+        ("environ", "expected"),
+        [
+            ({"HTTP_ACCEPT_LANGUAGE": "fr-FR,fr;q=0.9"}, "fr-FR"),
+            ({}, "en-US"),
+            (None, "en-US"),
+            ({"HTTP_ACCEPT_LANGUAGE": ";;"}, "en-US"),
+        ],
+    )
+    def test_parse_accept_language(self, environ, expected):
+        assert parse_accept_language(environ) == expected
+
+
+class TestSelectChatProfile:
+    """The client names its profile; a missing or unknown name falls back
+    the way the frontend does, so it can't escape config_overrides."""
+
+    def _profiles(self, default_name=None):
+        from chainlit.types import ChatProfile
+
+        return [
+            ChatProfile(name=n, markdown_description=n, default=(n == default_name))
+            for n in ("a", "b", "c")
+        ]
+
+    def test_exact_match(self):
+        assert select_chat_profile(self._profiles("c"), "b").name == "b"
+
+    @pytest.mark.parametrize("name", [None, "unknown", ""])
+    def test_falls_back_to_default_profile(self, name):
+        assert select_chat_profile(self._profiles("c"), name).name == "c"
+
+    def test_falls_back_to_first_profile_without_default(self):
+        assert select_chat_profile(self._profiles(), "unknown").name == "a"
+
+    @pytest.mark.parametrize("profiles", [None, []])
+    def test_no_profiles(self, profiles):
+        assert select_chat_profile(profiles, "a") is None
+
+
+class TestResolveSessionConfig:
+    """resolve_session_config applies the chat profile's config_overrides,
+    as /project/settings does for the UI (CVE-2026-110699)."""
+
+    def _register(self, test_config, profiles_fn):
+        """Register like an app does, through the real decorator."""
+        from chainlit.callbacks import set_chat_profiles
+
+        set_chat_profiles(profiles_fn)
+        assert test_config.code.set_chat_profiles is not None
+
+    def _profiles(self):
+        from chainlit.types import ChatProfile
+
+        return [
+            ChatProfile(
+                name="locked",
+                markdown_description="",
+                default=True,
+                config_overrides=_upload_override(False),
+            ),
+            ChatProfile(name="open", markdown_description=""),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_without_chat_profiles_returns_global_config(self, test_config):
+        test_config.code.set_chat_profiles = None
+        assert await resolve_session_config(None, "en-US", "locked") is test_config
+
+    @pytest.mark.asyncio
+    async def test_applies_selected_profile_overrides(self, test_config):
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+        test_config.features.spontaneous_file_upload.enabled = True
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert cfg is not test_config
+        assert cfg.features.spontaneous_file_upload.enabled is False
+        # the global config is not mutated
+        assert test_config.features.spontaneous_file_upload.enabled is True
+        # callbacks stay shared with the global config
+        assert cfg.code is test_config.code
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", [None, "unknown"])
+    async def test_missing_or_unknown_profile_uses_default(self, test_config, name):
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+
+        cfg = await resolve_session_config(None, "en-US", name)
+
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    async def test_profile_without_overrides_returns_global_config(self, test_config):
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+
+        assert await resolve_session_config(None, "en-US", "open") is test_config
+
+    @pytest.mark.asyncio
+    async def test_passes_user_and_language_like_project_settings(self, test_config):
+        calls = []
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            calls.append((user, language))
+            return profiles
+
+        self._register(test_config, set_profiles)
+        user = Mock(identifier="u")
+
+        test_config.ui.language = None
+        await resolve_session_config(user, "fr-FR", "locked")
+        test_config.ui.language = "de-DE"
+        await resolve_session_config(user, "fr-FR", "locked")
+
+        assert calls == [(user, "fr-FR"), (user, "de-DE")]
+
+    @pytest.mark.asyncio
+    async def test_sync_and_single_argument_callbacks(self, test_config):
+        profiles = self._profiles()
+
+        def set_profiles(user):
+            return profiles
+
+        self._register(test_config, set_profiles)
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("registered_raw", [False, True])
+    async def test_failing_callback_raises(self, test_config, registered_raw):
+        """Fail closed: a client can make the callback raise (e.g. through
+        the language), which must not drop the profile's restrictions."""
+
+        async def set_profiles(user, language):
+            raise RuntimeError("boom")
+
+        if registered_raw:
+            test_config.code.set_chat_profiles = set_profiles
+        else:
+            self._register(test_config, set_profiles)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await resolve_session_config(None, "zz", "locked")
+
+    @pytest.mark.asyncio
+    async def test_cancellation_propagates(self, test_config):
+        import asyncio
+
+        async def set_profiles(user, language):
+            raise asyncio.CancelledError
+
+        self._register(test_config, set_profiles)
+
+        with pytest.raises(asyncio.CancelledError):
+            await resolve_session_config(None, "en-US", "locked")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("inner_raises", [False, True])
+    async def test_app_decorator_around_registered_callback(
+        self, test_config, inner_raises
+    ):
+        """An app wraps the registered callback (wrap_user_function's
+        wrapper) in its own functools.wraps filter and assigns it back: the
+        filter must run, and a failure inside must still fail closed."""
+        import functools
+
+        from chainlit.types import ChatProfile
+
+        all_profiles = [
+            ChatProfile(
+                name="locked",
+                markdown_description="",
+                default=True,
+                config_overrides=_upload_override(False),
+            ),
+            ChatProfile(name="open", markdown_description=""),
+        ]
+
+        async def set_profiles(user, language):
+            if inner_raises:
+                raise RuntimeError("inner boom")
+            return all_profiles
+
+        self._register(test_config, set_profiles)
+        registered = test_config.code.set_chat_profiles
+
+        @functools.wraps(registered)
+        async def only_locked(user, language):
+            profiles = await registered(user, language)
+            return [p for p in profiles or [] if p.name == "locked"]
+
+        test_config.code.set_chat_profiles = only_locked
+
+        if inner_raises:
+            with pytest.raises(RuntimeError, match="inner boom"):
+                await resolve_session_config(None, "en-US", "open")
+        else:
+            # "open" isn't offered, so the default ("locked") applies
+            cfg = await resolve_session_config(None, "en-US", "open")
+            assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("schedule", ["create_task", "gather"])
+    async def test_failure_in_a_child_task_raises(self, test_config, schedule):
+        """An app decorator that runs the registered callback in a task."""
+        import asyncio
+        import functools
+
+        async def set_profiles(user, language):
+            raise RuntimeError("child boom")
+
+        self._register(test_config, set_profiles)
+        registered = test_config.code.set_chat_profiles
+
+        @functools.wraps(registered)
+        async def in_task(user, language):
+            if schedule == "create_task":
+                return await asyncio.create_task(registered(user, language))
+            (result,) = await asyncio.gather(registered(user, language))
+            return result
+
+        test_config.code.set_chat_profiles = in_task
+
+        with pytest.raises(RuntimeError, match="child boom"):
+            await resolve_session_config(None, "en-US", "locked")
+
+    @pytest.mark.asyncio
+    async def test_handled_failure_of_another_callback_is_not_a_failure(
+        self, test_config
+    ):
+        """The profiles callback recovers from an optional wrapped helper
+        failing: its valid result stands."""
+        from chainlit.utils import wrap_user_function
+
+        async def optional_helper():
+            raise RuntimeError("helper boom")
+
+        helper = wrap_user_function(optional_helper)  # swallows, returns None
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            await helper()
+            return profiles
+
+        self._register(test_config, set_profiles)
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    async def test_callback_returning_no_profiles_uses_global_config(self, test_config):
+        async def set_profiles(user, language):
+            return None
+
+        self._register(test_config, set_profiles)
+
+        assert await resolve_session_config(None, "en-US", "locked") is test_config
+
+    @pytest.mark.asyncio
+    async def test_directly_assigned_decorated_callback_runs_its_decorator(
+        self, test_config
+    ):
+        """An app's own functools.wraps decorator (here: a permission filter)
+        must not be skipped, or the session could pick a profile the user is
+        not offered."""
+        import functools
+
+        from chainlit.types import ChatProfile
+
+        all_profiles = [
+            ChatProfile(name="locked", markdown_description="", default=True),
+            ChatProfile(name="open", markdown_description=""),
+        ]
+
+        def only_locked(fn):
+            @functools.wraps(fn)
+            async def inner(user, language):
+                return [p for p in await fn(user, language) if p.name == "locked"]
+
+            return inner
+
+        @only_locked
+        async def set_profiles(user, language):
+            return all_profiles
+
+        test_config.code.set_chat_profiles = set_profiles
+        all_profiles[0].config_overrides = _upload_override(False)
+
+        # "open" isn't offered, so the default ("locked") applies
+        cfg = await resolve_session_config(None, "en-US", "open")
+
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("signature", ["positional_only", "varargs"])
+    async def test_directly_assigned_callback_is_called_positionally(
+        self, test_config, signature
+    ):
+        profiles = self._profiles()
+        calls = []
+
+        async def positional_only(user, language, /):
+            calls.append(language)
+            return profiles
+
+        async def varargs(*args):
+            calls.append(args[1])
+            return profiles
+
+        set_profiles = {"positional_only": positional_only, "varargs": varargs}[
+            signature
+        ]
+        test_config.code.set_chat_profiles = set_profiles
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert calls == ["en-US"]
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    async def test_app_decorators_on_the_callback_still_run(self, test_config):
+        """Only `wrap_user_function`'s layer is skipped."""
+        import functools
+
+        calls = []
+        profiles = self._profiles()
+
+        def app_decorator(fn):
+            @functools.wraps(fn)
+            async def inner(user, language):
+                calls.append(language)
+                return await fn(user, language)
+
+            return inner
+
+        @app_decorator
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert calls == ["en-US"]
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    async def test_invalid_overrides_raise(self, test_config, monkeypatch):
+        """Fail closed: /project/settings errors on them too, and the session
+        must not silently run without the profile's restrictions."""
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+        monkeypatch.setattr(
+            type(test_config),
+            "with_overrides",
+            Mock(side_effect=ValueError("bad override")),
+        )
+
+        with pytest.raises(ValueError, match="bad override"):
+            await resolve_session_config(None, "en-US", "locked")
+
+
+def _unregister(session):
+    from chainlit.session import ws_sessions_id, ws_sessions_sid
+
+    ws_sessions_id.pop(session.id, None)
+    ws_sessions_sid.pop(session.socket_id, None)
+
+
+class TestWebsocketSessionConfig:
+    def test_uses_given_config(self):
+        cfg = Mock()
+        session = WebsocketSession(
+            id="ws_cfg_id",
+            socket_id="socket_cfg",
+            emit=Mock(),
+            emit_call=Mock(),
+            user_env={},
+            client_type="webapp",
+            config=cfg,
+        )
+        try:
+            assert session.config is cfg
+            assert session.get_config() is cfg
+        finally:
+            _unregister(session)
+
+    def test_defaults_to_global_config(self, test_config):
+        session = WebsocketSession(
+            id="ws_cfg_id2",
+            socket_id="socket_cfg2",
+            emit=Mock(),
+            emit_call=Mock(),
+            user_env={},
+            client_type="webapp",
+        )
+        try:
+            assert session.config is test_config
+        finally:
+            _unregister(session)

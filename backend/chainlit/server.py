@@ -839,9 +839,15 @@ async def project_settings(
     chat_profiles = []
     profiles: list[dict] = []
     if config.code.set_chat_profiles:
-        chat_profiles = await config.code.set_chat_profiles(
-            current_user, effective_language
-        )
+        try:
+            chat_profiles = await config.code.set_chat_profiles(
+                current_user, effective_language
+            )
+        except Exception:
+            # As before: offer no profiles. The websocket connection, which
+            # enforces the profile's config, is refused in this case.
+            logger.exception("set_chat_profiles failed")
+            chat_profiles = []
         if chat_profiles:
             for p in chat_profiles:
                 d = p.to_dict()
@@ -867,13 +873,15 @@ async def project_settings(
         await data_layer.build_debug_url() if data_layer and config.run.debug else None
     )
 
+    from chainlit.session import select_chat_profile
+
+    # Pick the profile exactly as `resolve_session_config` does for the
+    # session, so a client that names no (or an unknown) profile is shown
+    # the config the backend will enforce for it.
     cfg = config
-    if chat_profile and chat_profiles:
-        current_profile = next(
-            (p for p in chat_profiles if p.name == chat_profile), None
-        )
-        if current_profile and getattr(current_profile, "config_overrides", None):
-            cfg = config.with_overrides(current_profile.config_overrides)
+    current_profile = select_chat_profile(chat_profiles, chat_profile)
+    if current_profile and getattr(current_profile, "config_overrides", None):
+        cfg = config.with_overrides(current_profile.config_overrides)
 
     features_dict = cfg.features.model_dump()
     # Strip sensitive details from MCP server configs — only expose name and type to clients
@@ -1980,7 +1988,9 @@ async def upload_file(
             )
 
         try:
-            validate_file_upload(file, spec=spec)
+            # The session's config carries its chat profile's overrides,
+            # which the UI already applies (CVE-2026-110699).
+            validate_file_upload(file, spec=spec, cfg=session.get_config())
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -1993,43 +2003,52 @@ async def upload_file(
         await file.close()
 
 
-def validate_file_upload(file: UploadFile, spec: Optional[AskFileSpec] = None):
+def validate_file_upload(
+    file: UploadFile,
+    spec: Optional[AskFileSpec] = None,
+    cfg: Optional[ChainlitConfig] = None,
+):
     """Validate the file upload as configured in config.features.spontaneous_file_upload or by AskFileSpec
     for a specific message.
 
     Args:
         file (UploadFile): The file to validate.
         spec (AskFileSpec): The file spec to validate against if any.
+        cfg (ChainlitConfig): The session's config; defaults to the global config.
     Raises:
         ValueError: If the file is not allowed.
     """
-    if not spec and config.features.spontaneous_file_upload is None:
-        """Default for a missing config is to allow the fileupload without any restrictions"""
-        return
-
-    if not spec and not config.features.spontaneous_file_upload.enabled:
+    feature = (cfg or config).features.spontaneous_file_upload
+    # Without the section the UI offers no uploads, so neither does the
+    # backend (CVE-2026-110699). Uploads requested by an AskFileMessage
+    # (`spec`) are validated against that message's own spec.
+    if not spec and (feature is None or not feature.enabled):
         raise ValueError("File upload is not enabled")
 
-    validate_file_mime_type(file, spec)
-    validate_file_size(file, spec)
+    validate_file_mime_type(file, spec, cfg)
+    validate_file_size(file, spec, cfg)
 
 
-def validate_file_mime_type(file: UploadFile, spec: Optional[AskFileSpec]):
+def validate_file_mime_type(
+    file: UploadFile,
+    spec: Optional[AskFileSpec],
+    cfg: Optional[ChainlitConfig] = None,
+):
     """Validate the file mime type as configured in config.features.spontaneous_file_upload.
     Args:
         file (UploadFile): The file to validate.
+        cfg (ChainlitConfig): The session's config; defaults to the global config.
     Raises:
         ValueError: If the file type is not allowed.
     """
-
-    if not spec and (
-        config.features.spontaneous_file_upload is None
-        or config.features.spontaneous_file_upload.accept is None
-    ):
+    feature = (cfg or config).features.spontaneous_file_upload
+    if spec:
+        accept = spec.accept
+    elif feature is None or feature.accept is None:
         "Accept is not configured, allowing all file types"
         return
-
-    accept = config.features.spontaneous_file_upload.accept if not spec else spec.accept
+    else:
+        accept = feature.accept
 
     assert isinstance(accept, List) or isinstance(accept, dict), (
         "Invalid configuration for spontaneous_file_upload, accept must be a list or a dict"
@@ -2052,24 +2071,25 @@ def validate_file_mime_type(file: UploadFile, spec: Optional[AskFileSpec]):
     raise ValueError("File type not allowed")
 
 
-def validate_file_size(file: UploadFile, spec: Optional[AskFileSpec]):
+def validate_file_size(
+    file: UploadFile,
+    spec: Optional[AskFileSpec],
+    cfg: Optional[ChainlitConfig] = None,
+):
     """Validate the file size as configured in config.features.spontaneous_file_upload.
     Args:
         file (UploadFile): The file to validate.
+        cfg (ChainlitConfig): The session's config; defaults to the global config.
     Raises:
         ValueError: If the file size is too large.
     """
-    if not spec and (
-        config.features.spontaneous_file_upload is None
-        or config.features.spontaneous_file_upload.max_size_mb is None
-    ):
+    feature = (cfg or config).features.spontaneous_file_upload
+    if spec:
+        max_size_mb = spec.max_size_mb
+    elif feature is None or feature.max_size_mb is None:
         return
-
-    max_size_mb = (
-        config.features.spontaneous_file_upload.max_size_mb
-        if not spec
-        else spec.max_size_mb
-    )
+    else:
+        max_size_mb = feature.max_size_mb
     if file.size is not None and file.size > max_size_mb * 1024 * 1024:
         raise ValueError("File size too large")
 
@@ -2100,9 +2120,68 @@ async def get_file(
 
     if file_id in session.files:
         file = session.files[file_id]
-        return FileResponse(file["path"], media_type=file["type"])
+        # The MIME type is whatever the uploader claimed. Render inline only
+        # types a browser can't run script from; anything else (HTML, SVG,
+        # XML, ...) is a download, so the app's origin can't be used to host
+        # attacker pages (CVE-2026-110699). In-app rendering is unaffected:
+        # <img>/<audio>/<video> and fetch() ignore Content-Disposition.
+        mime, inline = _served_mime_type(str(file["type"]))
+        return FileResponse(
+            file["path"],
+            media_type=mime,
+            filename=file.get("name") or file_id,
+            content_disposition_type="inline" if inline else "attachment",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
     else:
         raise HTTPException(status_code=404, detail="File not found")
+
+
+# Types served inline by `get_file`: browsers render them without running
+# script. Notably absent: text/html, image/svg+xml, XML and JavaScript.
+_INLINE_SAFE_MIME_TYPES = frozenset(
+    {
+        "application/pdf",
+        "image/apng",
+        "image/avif",
+        "image/bmp",
+        "image/gif",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "text/plain",
+    }
+)
+_INLINE_SAFE_MIME_PREFIXES = ("audio/", "video/")
+# A single RFC 9110 `type/subtype` token. Anything else (a comma-separated
+# list, which browsers may read as its last entry, or stray characters) is
+# served as an opaque download.
+_MIME_ESSENCE_RE = re.compile(
+    r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+)
+
+
+_CHARSET_PARAM_RE = re.compile(
+    r"^\s*charset\s*=\s*\"?([A-Za-z0-9._:-]{1,40})\"?\s*$", re.IGNORECASE
+)
+
+
+def _served_mime_type(claimed: str) -> tuple[str, bool]:
+    """Return the Content-Type to serve a stored file with, and whether it
+    may be rendered inline."""
+    essence, *params = claimed.split(";")
+    essence = essence.strip().lower()
+    if not _MIME_ESSENCE_RE.match(essence):
+        return "application/octet-stream", False
+    inline = essence in _INLINE_SAFE_MIME_TYPES or (
+        essence.startswith(_INLINE_SAFE_MIME_PREFIXES) and not essence.endswith("+xml")
+    )
+    # Keep a well-formed charset, so non-UTF-8 text isn't served as UTF-8
+    # (Starlette adds `charset=utf-8` to text/* types that have none).
+    for param in params:
+        if match := _CHARSET_PARAM_RE.match(param):
+            return f"{essence}; charset={match.group(1)}", inline
+    return essence, inline
 
 
 @router.get("/favicon")

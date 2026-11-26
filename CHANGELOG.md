@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **Breaking:** spontaneous file uploads are now rejected when `config.toml` has no `[features.spontaneous_file_upload]` section (CVE-2026-110699). The web app and the copilot already treated a missing section as disabled and hid the upload button, but `POST /project/file` accepted any file type and size. Apps that upload through the API or a custom client without that section must add it with `enabled = true`. The default `config.toml` that Chainlit generates already has it. Uploads requested with `AskFileMessage` are not affected.
+- Fix a file upload restriction bypass (CVE-2026-110699, https://cert.pl/en/posts/2026/11/CVE-2026-110699/, reported by Marcin Ochab). A chat profile's `config_overrides` for `features.spontaneous_file_upload` (`enabled`, `accept`, `max_size_mb`) only hid the upload button: the upload endpoint still accepted files under the global settings. They are now enforced on the backend. A client that names no chat profile, or one that the app does not offer, gets the overrides of the `default` profile, else the first one, which is what the web app selects. `/project/settings` now reports that same profile's config, so clients that never pick a profile, such as the copilot, are shown what the backend enforces.
+- Files that Chainlit serves from a session (`/project/file/...`: user uploads and elements sent during the session) are no longer served inline when their type could run script in the browser. They used to be served with whatever `Content-Type` the uploader claimed, so a link to an uploaded HTML or SVG file showed attacker-controlled content, such as a fake login page, on the app's own domain. Images (other than SVG), audio, video, PDF and plain text are still served inline. Everything else is now a download (`Content-Disposition: attachment`), and all files are sent with `X-Content-Type-Options: nosniff`. Elements render in the app as before; only opening such a file's URL directly now downloads it. Elements persisted by a data layer are served by its storage provider (S3, GCS, Azure) and are not affected.
+
+### Changed
+
+- **Breaking:** an exception raised by the `@cl.set_chat_profiles` callback is no longer swallowed (CVE-2026-110699). A client could trigger one, for example through its `Accept-Language` header, and its session then ran on the global config, escaping the chat profile's restrictions. The websocket connection is now refused instead. `/project/settings` still answers with no chat profiles when the callback raises. Apps whose callback can raise should handle the error in the callback and return the profiles to offer. Code that calls the registered `config.code.set_chat_profiles` itself now gets the callback's exception instead of `None` and must handle it.
+
+### Fixed
+
+- Chat profile `config_overrides` now apply at runtime, not only in the UI. Since they were introduced in 2.7.0, the backend ignored them for file uploads, MCP (`features.mcp`, including `servers` and `user_servers.allowed_urls`) and audio (`features.audio`), and used the global config instead. Apps whose chat profiles override these settings will now see them enforced. A profile whose `config_overrides` fail validation now refuses the websocket connection; `/project/settings` already returned an error for it. This also covers the backend side of https://github.com/Chainlit/chainlit/issues/2908.
+
 ## [3.0.0] - 2026-11-24
 
 ### Added

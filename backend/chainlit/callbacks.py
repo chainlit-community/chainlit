@@ -246,7 +246,10 @@ def set_chat_profiles(func):
         Callable[[Optional["User"]], Awaitable[List["ChatProfile"]]]: The decorated function.
     """
 
-    config.code.set_chat_profiles = wrap_user_function(func)
+    # Exceptions propagate, so a session never mistakes a failing callback
+    # for an app without profiles and runs without the profile's
+    # restrictions (CVE-2026-110699). `/project/settings` handles them.
+    config.code.set_chat_profiles = wrap_user_function(func, reraise=True)
     return func
 
 

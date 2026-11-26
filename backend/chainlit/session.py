@@ -1,11 +1,22 @@
 import asyncio
+import inspect
 import json
 import mimetypes
 import re
 import shutil
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Deque, Dict, Literal, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Deque,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Union,
+)
 
 import aiofiles
 
@@ -16,7 +27,7 @@ if TYPE_CHECKING:
     from mcp import ClientSession
 
     from chainlit.config import ChainlitConfig
-    from chainlit.types import FileDict
+    from chainlit.types import ChatProfile, FileDict
     from chainlit.user import PersistedUser, User
 
 _CLOSE_TIMEOUT = 10.0  # seconds to wait for a background MCP task to finish
@@ -289,6 +300,85 @@ class HTTPSession(BaseSession):
 ThreadQueue = Deque[tuple[Callable, object, tuple, Dict]]
 
 
+def parse_accept_language(environ: Optional[dict[str, Any]]) -> str:
+    """Return the primary language tag of the request's Accept-Language header."""
+    match = (
+        re.match(r"^\s*([a-zA-Z0-9-]+)", environ.get("HTTP_ACCEPT_LANGUAGE", "en-US"))
+        if environ
+        else None
+    )
+    return match.group(1) if match else "en-US"
+
+
+def select_chat_profile(
+    profiles: Optional[List["ChatProfile"]], name: Optional[str]
+) -> Optional["ChatProfile"]:
+    """Return the profile called `name`, else the one the UI would pick.
+
+    The client names its chat profile, so a missing or unknown name must not
+    escape the profiles' `config_overrides`. It falls back the way the
+    frontend does (`frontend/src/App.tsx`): the `default` profile, else the
+    first one.
+    """
+    if not profiles:
+        return None
+    for profile in profiles:
+        if profile.name == name:
+            return profile
+    return next((p for p in profiles if p.default), profiles[0])
+
+
+async def _call_set_chat_profiles(callback: Callable, user, language: str):
+    """Call the app's `set_chat_profiles` callback as `/project/settings`
+    does. `@cl.set_chat_profiles` registers it with `reraise=True`, so a
+    failure raises, however the app wraps or schedules it, instead of
+    looking like an app without profiles."""
+    result = callback(user, language)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+async def resolve_session_config(
+    user: Optional[Union["User", "PersistedUser"]],
+    language: str,
+    chat_profile: Optional[str],
+) -> "ChainlitConfig":
+    """Return the config a session runs with: the global config, with the
+    selected chat profile's `config_overrides` applied.
+
+    `/project/settings` applies the same overrides to what the UI shows, so
+    the backend must enforce them too (CVE-2026-110699). The result shares
+    the global `config.code`, so callbacks registered or reloaded later are
+    always the current ones.
+
+    Fails closed: if `set_chat_profiles` raises, or the overrides don't
+    validate, this raises instead of returning the global config, so the
+    session can't run without its profile's restrictions. Clients can
+    influence the callback's input (the language comes from the
+    Accept-Language header), so a failure is not just a transient error.
+    """
+    from chainlit.config import config as global_config
+
+    if not global_config.code.set_chat_profiles:
+        return global_config
+
+    # Same arguments as `/project/settings`, so both see the same profiles.
+    profiles = await _call_set_chat_profiles(
+        global_config.code.set_chat_profiles,
+        user,
+        global_config.ui.language or language,
+    )
+    profile = select_chat_profile(profiles, chat_profile)
+    overrides = getattr(profile, "config_overrides", None) if profile else None
+    if not overrides:
+        return global_config
+
+    cfg = global_config.with_overrides(overrides)
+    cfg.code = global_config.code
+    return cfg
+
+
 class WebsocketSession(BaseSession):
     """Internal web socket session object.
 
@@ -328,6 +418,9 @@ class WebsocketSession(BaseSession):
         token: Optional[str] = None,
         # Chat profile selected before the session was created
         chat_profile: Optional[str] = None,
+        # Effective config for this session, with the chat profile's
+        # `config_overrides` applied (see `resolve_session_config`)
+        config: Optional["ChainlitConfig"] = None,
     ):
         super().__init__(
             id=id,
@@ -349,16 +442,13 @@ class WebsocketSession(BaseSession):
         self.thread_queues: Dict[str, ThreadQueue] = {}
         self.mcp_sessions = {}
 
-        match = (
-            re.match(
-                r"^\s*([a-zA-Z0-9-]+)", environ.get("HTTP_ACCEPT_LANGUAGE", "en-US")
-            )
-            if environ
-            else None
-        )
-        self.language = match.group(1) if match else "en-US"
+        self.language = parse_accept_language(environ)
 
-        self.config: ChainlitConfig = self.get_config()
+        # The socket `connect` handler resolves the chat profile's config
+        # (see `resolve_session_config`) before the session is registered, so
+        # no request can see the session with the wrong config. `get_config()`
+        # remains the fallback for callers that construct sessions directly.
+        self.config: ChainlitConfig = config if config else self.get_config()
 
         ws_sessions_id[self.id] = self
         ws_sessions_sid[socket_id] = self
@@ -369,12 +459,13 @@ class WebsocketSession(BaseSession):
         """
         from chainlit.config import config as global_config
 
+        # If already computed (by `resolve_session_config` at connect, also
+        # for a session without a chat profile name), use self.config
+        if getattr(self, "config", None):
+            return self.config
         # If no chat profile, always fallback to global config
         if not self.chat_profile:
             return global_config
-        # If already computed, use self.config
-        if hasattr(self, "config") and self.config:
-            return self.config
         # Try to compute overrides
         cfg = global_config
         if global_config.code.set_chat_profiles:

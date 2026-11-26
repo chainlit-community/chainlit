@@ -848,3 +848,26 @@ async def test_set_chat_profiles_with_config_overrides(
         assert light_profile.config_overrides is not None
         assert light_profile.config_overrides.ui.name == "Light Theme App"
         assert light_profile.config_overrides.ui.default_theme == "light"
+
+
+async def test_set_chat_profiles_propagates_exceptions(
+    mock_chainlit_context, test_config: config.ChainlitConfig
+):
+    """Unlike other callbacks, a failure must not look like "no profiles"
+    (CVE-2026-110699); callers handle it."""
+    from chainlit.callbacks import set_chat_profiles
+
+    async with mock_chainlit_context:
+
+        @set_chat_profiles
+        async def profiles(user, language):
+            raise RuntimeError("boom")
+
+        callback = test_config.code.set_chat_profiles
+        assert callback is not None
+        raised = None
+        try:
+            await callback(None, "en-US")
+        except RuntimeError as e:
+            raised = e
+        assert str(raised) == "boom"
