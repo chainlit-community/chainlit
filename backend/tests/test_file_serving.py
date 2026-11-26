@@ -63,7 +63,20 @@ def test_content_disposition_encodes_the_filename(filename, expected):
         ("image/png", "attachment", ("image/png", 'attachment; filename="f"')),
         # script-capable or malformed: always an attachment
         ("image/svg+xml", None, ("image/svg+xml", 'attachment; filename="f"')),
-        ("text/html", "inline", ("text/html", 'attachment; filename="f"')),
+        # active documents are also stored with an opaque type
+        (
+            "text/html",
+            "inline",
+            ("application/octet-stream", 'attachment; filename="f"'),
+        ),
+        (
+            "application/rss+xml",
+            None,
+            ("application/octet-stream", 'attachment; filename="f"'),
+        ),
+        ("text/xml", None, ("application/octet-stream", 'attachment; filename="f"')),
+        # not an active document: keeps its type, but is a download
+        ("application/json", None, ("application/json", 'attachment; filename="f"')),
         (
             "video/mp4, text/html",
             None,
@@ -73,3 +86,15 @@ def test_content_disposition_encodes_the_filename(filename, expected):
 )
 def test_storage_object_headers(claimed, safe_disposition, expected):
     assert storage_object_headers(claimed, "f", safe_disposition) == expected
+
+
+def test_content_disposition_survives_a_lone_surrogate():
+    assert content_disposition("attachment", "a\udc80.html") == (
+        "attachment; filename*=utf-8''a%3F.html"
+    )
+
+
+def test_content_disposition_bounds_the_filename():
+    value = content_disposition("attachment", "é" * 1000)
+    assert value.startswith("attachment; filename*=utf-8''")
+    assert value.count("%C3%A9") == 200

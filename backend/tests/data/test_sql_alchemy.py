@@ -184,7 +184,7 @@ async def test_create_element_stores_with_safe_serving_headers(
 
     kwargs = mock_storage_client.upload_file.call_args.kwargs
     assert kwargs["mime"] == mime
-    assert kwargs["content_disposition"] == disposition
+    assert kwargs.get("content_disposition") == disposition
 
 
 async def test_get_current_timestamp(data_layer: SQLAlchemyDataLayer):

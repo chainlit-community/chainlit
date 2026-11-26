@@ -8,9 +8,8 @@ import asyncpg  # type: ignore
 
 from chainlit.data.base import BaseDataLayer
 from chainlit.data.storage_clients.base import BaseStorageClient
-from chainlit.data.utils import queue_until_user_message
+from chainlit.data.utils import queue_until_user_message, upload_element_file
 from chainlit.element import ElementDict
-from chainlit.file_serving import storage_object_headers
 from chainlit.logger import logger
 from chainlit.step import StepDict
 from chainlit.types import (
@@ -195,17 +194,16 @@ class ChainlitDataLayer(BaseDataLayer):
                 else:
                     path = f"files/{element.id}"
 
-                # Normalized type; script-capable types can't be stored inline
-                # (CVE-2026-110699). Every file stays a download, as before.
-                mime, content_disposition = storage_object_headers(
-                    element.mime, element.name, safe_disposition="attachment"
-                )
-                await self.storage_client.upload_file(
+                # Normalized type; script-capable types are stored as
+                # downloads (CVE-2026-110699). Every file stays a download, as
+                # before.
+                await upload_element_file(
+                    self.storage_client,
                     object_key=path,
                     data=content,
-                    mime=mime,
-                    overwrite=True,
-                    content_disposition=content_disposition,
+                    mime=element.mime,
+                    filename=element.name,
+                    safe_disposition="attachment",
                 )
 
         else:

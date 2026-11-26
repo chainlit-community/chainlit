@@ -39,6 +39,31 @@ _CHARSET_PARAM_RE = re.compile(
 )
 
 
+_MAX_FILENAME_CHARS = 200
+
+# Types a browser renders as a document that can run script (other than
+# SVG, which <img> needs under its own type). Storage providers serve
+# objects without `nosniff`, and a CDN or proxy may drop the disposition,
+# so these are stored with an opaque type as well as `attachment`.
+_ACTIVE_DOCUMENT_TYPES = frozenset(
+    {
+        "application/xhtml+xml",
+        "application/xml",
+        "application/xslt+xml",
+        "text/html",
+        "text/xml",
+        "text/xsl",
+    }
+)
+
+
+def is_active_document(mime: Optional[str]) -> bool:
+    essence = mime_essence(mime)
+    return essence != "image/svg+xml" and (
+        essence in _ACTIVE_DOCUMENT_TYPES or essence.endswith(("+xml", "/xml"))
+    )
+
+
 def mime_essence(mime: Optional[str]) -> str:
     """The lowercase `type/subtype` of a MIME type, without parameters."""
     return (mime or "").split(";", 1)[0].strip().lower()
@@ -69,8 +94,11 @@ def content_disposition(
     percent-encoded (RFC 6266 / RFC 8187), so it can't break the header."""
     if not filename:
         return disposition_type
+    # Bound the header's length; percent-encoding can triple it.
+    filename = filename[:_MAX_FILENAME_CHARS]
     # safe="": RFC 8187 allows no literal "/" in an extended value.
-    quoted = quote(filename, safe="")
+    # errors="replace": a lone surrogate must not make the upload fail.
+    quoted = quote(filename, safe="", errors="replace")
     if quoted != filename:
         return f"{disposition_type}; filename*=utf-8''{quoted}"
     return f'{disposition_type}; filename="{filename}"'
@@ -85,12 +113,15 @@ def storage_object_headers(
     file with in a storage provider (S3, GCS, Azure), which serves it with
     these.
 
-    The type is normalized as for `/project/file`. A type that could run
-    script is always an `attachment`. For the other types the disposition
-    is `safe_disposition`, or None to set none (the provider's default,
-    which browsers render inline).
+    The type is normalized as for `/project/file`, and active document
+    types (HTML, XHTML, XML) are stored as `application/octet-stream`. Every
+    type outside the inline allowlist is an `attachment`. For the types on
+    it the disposition is `safe_disposition`, or None to set none (the
+    provider's default, which browsers render inline).
     """
     mime, inline = served_mime_type(claimed_mime)
+    if is_active_document(mime):
+        mime = "application/octet-stream"
     disposition_type = safe_disposition if inline else "attachment"
     if disposition_type is None:
         return mime, None

@@ -33,7 +33,7 @@ CASES = [
         )
         for claimed, name, mime in [
             ("image/svg+xml", "e.svg", "image/svg+xml"),
-            ("text/html", "x.html", "text/html"),
+            ("text/html", "x.html", "application/octet-stream"),
             ("video/mp4, text/html", "v.mp4", "application/octet-stream"),
             (None, "d.bin", "application/octet-stream"),
         ]
@@ -41,7 +41,7 @@ CASES = [
     (
         "text/html",
         'a"; b.html',
-        "text/html",
+        "application/octet-stream",
         "attachment; filename*=utf-8''a%22%3B%20b.html",
         "attachment; filename*=utf-8''a%22%3B%20b.html",
     ),
@@ -61,7 +61,7 @@ def _assert_stored(storage, mime, disposition):
     storage.upload_file.assert_awaited_once()
     kwargs = storage.upload_file.call_args.kwargs
     assert kwargs["mime"] == mime
-    assert kwargs["content_disposition"] == disposition
+    assert kwargs.get("content_disposition") == disposition
 
 
 @pytest.mark.asyncio
@@ -93,3 +93,85 @@ async def test_dynamodb_data_layer(
         await layer.create_element(_element(claimed, name))
 
     _assert_stored(mock_storage_client, mime, disposition)
+
+
+class LegacyStorageClient:
+    """A custom client written before `content_disposition` existed."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def upload_file(
+        self, object_key, data, mime="application/octet-stream", overwrite=True
+    ):
+        self.calls.append({"object_key": object_key, "mime": mime})
+        return {"url": "https://example.com/x", "object_key": object_key}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("claimed", "stored"),
+    [
+        ("image/png", "image/png"),
+        # can't be made a download: stored with a type no browser renders
+        ("image/svg+xml", "application/octet-stream"),
+        ("text/html", "application/octet-stream"),
+    ],
+)
+async def test_legacy_storage_client_still_works(
+    mock_chainlit_context, claimed, stored
+):
+    storage = LegacyStorageClient()
+    async with mock_chainlit_context:
+        layer = DynamoDBDataLayer(
+            table_name="t", client=Mock(), storage_provider=storage
+        )
+
+        await layer.create_element(_element(claimed, "f"))
+
+    assert storage.calls == [
+        {"object_key": storage.calls[0]["object_key"], "mime": stored}
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("claimed", "content_type", "disposition"),
+    [
+        ("image/svg+xml", "image/svg+xml", 'attachment; filename="f"'),
+        ("text/html", "application/octet-stream", 'attachment; filename="f"'),
+        ("image/png", "image/png", None),
+    ],
+)
+async def test_object_metadata_in_s3(
+    mock_chainlit_context, monkeypatch, claimed, content_type, disposition
+):
+    """End to end through the real S3 client (moto): what the bucket serves."""
+    import boto3  # type: ignore
+    from moto import mock_aws
+
+    from chainlit.data.storage_clients.s3 import S3StorageClient
+
+    for key, value in {
+        "AWS_ACCESS_KEY_ID": "testing",
+        "AWS_SECRET_ACCESS_KEY": "testing",
+        "AWS_DEFAULT_REGION": "us-east-1",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    with mock_aws():
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket="test-bucket")
+        storage = S3StorageClient(bucket="test-bucket")
+        async with mock_chainlit_context:
+            layer = DynamoDBDataLayer(
+                table_name="t", client=Mock(), storage_provider=storage
+            )
+            element = _element(claimed, "f")
+            await layer.create_element(element)
+
+        (obj,) = s3.list_objects_v2(Bucket="test-bucket")["Contents"]
+        head = s3.head_object(Bucket="test-bucket", Key=obj["Key"])
+
+    assert head["ContentType"] == content_type
+    assert head.get("ContentDisposition") == disposition
