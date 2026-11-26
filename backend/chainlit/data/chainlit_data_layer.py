@@ -204,6 +204,7 @@ class ChainlitDataLayer(BaseDataLayer):
                     mime=element.mime,
                     filename=element.name,
                     safe_disposition="attachment",
+                    always_passed_disposition=True,
                 )
 
         else:

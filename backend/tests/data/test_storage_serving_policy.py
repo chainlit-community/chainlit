@@ -57,6 +57,22 @@ def _element(mime, name):
     )
 
 
+@pytest.fixture
+def declaring_storage_client():
+    """Has BaseStorageClient's signature, like the in-tree clients, which
+    declare `content_disposition` (a plain spec'd mock shows `**kwargs`)."""
+    from unittest.mock import create_autospec
+
+    from chainlit.data.storage_clients.base import BaseStorageClient
+
+    client = create_autospec(BaseStorageClient, instance=True)
+    client.upload_file.return_value = {
+        "url": "https://example.com/x",
+        "object_key": "k",
+    }
+    return client
+
+
 def _assert_stored(storage, mime, disposition):
     storage.upload_file.assert_awaited_once()
     kwargs = storage.upload_file.call_args.kwargs
@@ -67,32 +83,32 @@ def _assert_stored(storage, mime, disposition):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("claimed", "name", "mime", "disposition", "_"), CASES)
 async def test_chainlit_data_layer(
-    mock_chainlit_context, mock_storage_client, claimed, name, mime, disposition, _
+    mock_chainlit_context, declaring_storage_client, claimed, name, mime, disposition, _
 ):
     async with mock_chainlit_context:
         layer = ChainlitDataLayer(
-            database_url="postgresql://fake", storage_client=mock_storage_client
+            database_url="postgresql://fake", storage_client=declaring_storage_client
         )
         layer.execute_query = AsyncMock(return_value=[{"id": "row"}])
 
         await layer.create_element(_element(claimed, name))
 
-    _assert_stored(mock_storage_client, mime, disposition)
+    _assert_stored(declaring_storage_client, mime, disposition)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("claimed", "name", "mime", "_", "disposition"), CASES)
 async def test_dynamodb_data_layer(
-    mock_chainlit_context, mock_storage_client, claimed, name, mime, _, disposition
+    mock_chainlit_context, declaring_storage_client, claimed, name, mime, _, disposition
 ):
     async with mock_chainlit_context:
         layer = DynamoDBDataLayer(
-            table_name="t", client=Mock(), storage_provider=mock_storage_client
+            table_name="t", client=Mock(), storage_provider=declaring_storage_client
         )
 
         await layer.create_element(_element(claimed, name))
 
-    _assert_stored(mock_storage_client, mime, disposition)
+    _assert_stored(declaring_storage_client, mime, disposition)
 
 
 class LegacyStorageClient:
@@ -213,15 +229,32 @@ async def test_positional_only_parameter_is_not_keyword_support():
 
 
 @pytest.mark.asyncio
-async def test_kwargs_client_gets_the_disposition():
+@pytest.mark.parametrize(
+    ("always_passed", "expected"),
+    [
+        # the Chainlit data layer always passed it: **kwargs gets it, as before
+        (True, ("image/svg+xml", 'attachment; filename="e.svg"')),
+        # SQLAlchemy / DynamoDB never did: **kwargs may hide a legacy client,
+        # so it gets no keyword, and a type no browser renders
+        (False, ("application/octet-stream", None)),
+    ],
+)
+async def test_kwargs_client(always_passed, expected):
     from chainlit.data.utils import upload_element_file
 
     storage = KwargsClient()
 
-    await upload_element_file(storage, "k", b"x", "image/svg+xml", "e.svg")
+    await upload_element_file(
+        storage,
+        "k",
+        b"x",
+        "image/svg+xml",
+        "e.svg",
+        always_passed_disposition=always_passed,
+    )
 
-    assert storage.calls[0]["mime"] == "image/svg+xml"
-    assert storage.calls[0]["content_disposition"] == 'attachment; filename="e.svg"'
+    (call,) = storage.calls
+    assert (call["mime"], call.get("content_disposition")) == expected
 
 
 def _legacy_behind_wrapper():
@@ -238,17 +271,16 @@ def _legacy_behind_wrapper():
 
 
 @pytest.mark.asyncio
-async def test_wrapped_legacy_client_fails_closed():
-    """Undetectable behind the wrapper: the upload fails instead of storing
-    a renderable SVG, and is not retried."""
+async def test_wrapped_legacy_client_keeps_working():
+    """Behind a signature-erasing wrapper it can't be told apart from a
+    modern client, so SQLAlchemy and DynamoDB don't pass the keyword."""
     from chainlit.data.utils import upload_element_file
 
     storage = _legacy_behind_wrapper()
 
-    with pytest.raises(TypeError, match="content_disposition"):
-        await upload_element_file(storage, "k", b"x", "image/svg+xml", "e.svg")
+    await upload_element_file(storage, "k", b"x", "image/svg+xml", "e.svg")
 
-    assert storage.calls == []
+    assert storage.calls == [{"object_key": "k", "mime": "application/octet-stream"}]
 
 
 @pytest.mark.asyncio
@@ -263,7 +295,14 @@ async def test_client_errors_mentioning_the_parameter_propagate_once():
             raise TypeError("invalid content_disposition metadata")
 
     with pytest.raises(TypeError, match="invalid content_disposition"):
-        await upload_element_file(Failing(), "k", b"x", "image/svg+xml", "e.svg")
+        await upload_element_file(
+            Failing(),
+            "k",
+            b"x",
+            "image/svg+xml",
+            "e.svg",
+            always_passed_disposition=True,
+        )
 
     assert Failing.calls == 1
 

@@ -36,13 +36,15 @@ def queue_until_user_message():
     return decorator
 
 
-def _accepts_content_disposition(upload_file) -> bool:
+def _accepts_content_disposition(upload_file, var_keyword_counts: bool) -> bool:
+    """Whether `upload_file` takes `content_disposition` by keyword: a
+    parameter of that name, or (if `var_keyword_counts`) a `**kwargs`."""
     try:
         params = inspect.signature(upload_file).parameters.values()
     except (TypeError, ValueError):
-        return True
+        return var_keyword_counts
     return any(
-        p.kind is inspect.Parameter.VAR_KEYWORD
+        (var_keyword_counts and p.kind is inspect.Parameter.VAR_KEYWORD)
         or (
             p.name == "content_disposition"
             and p.kind
@@ -59,18 +61,25 @@ async def upload_element_file(
     mime: Optional[str],
     filename: Optional[str],
     safe_disposition: Optional[Literal["inline", "attachment"]] = None,
+    always_passed_disposition: bool = False,
 ):
     """Upload an element's bytes with the serving policy of `/project/file`
-    (CVE-2026-110699): see `storage_object_headers`."""
+    (CVE-2026-110699): see `storage_object_headers`.
+
+    `always_passed_disposition` is for a data layer that has always passed
+    `content_disposition` to the storage client (the Chainlit data layer):
+    a client that takes `**kwargs` gets it, as before. Otherwise only a
+    client that declares the parameter gets it, so a client that worked
+    without it keeps working.
+    """
     stored_mime, disposition = storage_object_headers(mime, filename, safe_disposition)
     if disposition is None:
         return await storage.upload_file(
             object_key=object_key, data=data, mime=stored_mime, overwrite=True
         )
-    if _accepts_content_disposition(storage.upload_file):
-        # Called once: a legacy client hidden behind a `*args, **kwargs`
-        # wrapper fails with a TypeError (fails closed). Retrying without
-        # the keyword could repeat an upload that already ran.
+    if _accepts_content_disposition(
+        storage.upload_file, var_keyword_counts=always_passed_disposition
+    ):
         return await storage.upload_file(
             object_key=object_key,
             data=data,
@@ -78,8 +87,8 @@ async def upload_element_file(
             overwrite=True,
             content_disposition=disposition,
         )
-    # A storage client written before `content_disposition` existed can't
-    # make this a download. Active documents already have an opaque type;
+    # A storage client that doesn't declare `content_disposition` (or may
+    # not: `**kwargs`) can't be relied on to make this a download. Active documents already have an opaque type;
     # SVG is the other type that runs script when opened, so it gets one
     # too. Other types keep theirs: the frontend parses application/json
     # responses (Plotly and dataframe elements).
