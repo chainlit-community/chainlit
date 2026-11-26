@@ -1116,6 +1116,24 @@ def test_connect_refused_when_chat_profiles_callback_raises(
     assert WebsocketSession.get_by_id(session_id) is None
 
 
+def test_project_settings_degrades_when_chat_profiles_callback_raises(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+):
+    """As before the fix: no profiles and the global features (the
+    websocket connection is refused instead)."""
+    from chainlit.callbacks import set_chat_profiles
+
+    @set_chat_profiles
+    async def profiles(user, language):
+        raise RuntimeError("boom")
+
+    response = test_client.get("/project/settings")
+
+    assert response.status_code == 200
+    assert response.json()["chatProfiles"] == []
+
+
 def test_project_translations_file_path_traversal(
     test_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):

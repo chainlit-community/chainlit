@@ -839,9 +839,15 @@ async def project_settings(
     chat_profiles = []
     profiles: list[dict] = []
     if config.code.set_chat_profiles:
-        chat_profiles = await config.code.set_chat_profiles(
-            current_user, effective_language
-        )
+        try:
+            chat_profiles = await config.code.set_chat_profiles(
+                current_user, effective_language
+            )
+        except Exception:
+            # As before: offer no profiles. The websocket connection, which
+            # enforces the profile's config, is refused in this case.
+            logger.exception("set_chat_profiles failed")
+            chat_profiles = []
         if chat_profiles:
             for p in chat_profiles:
                 d = p.to_dict()

@@ -889,9 +889,11 @@ class TestResolveSessionConfig:
     as /project/settings does for the UI (CVE-2026-110699)."""
 
     def _register(self, test_config, profiles_fn):
-        from chainlit.utils import wrap_user_function
+        """Register like an app does, through the real decorator."""
+        from chainlit.callbacks import set_chat_profiles
 
-        test_config.code.set_chat_profiles = wrap_user_function(profiles_fn)
+        set_chat_profiles(profiles_fn)
+        assert test_config.code.set_chat_profiles is not None
 
     def _profiles(self):
         from chainlit.types import ChatProfile
@@ -1001,11 +1003,11 @@ class TestResolveSessionConfig:
         else:
             self._register(test_config, set_profiles)
 
-        with pytest.raises(RuntimeError, match=r"boom|set_chat_profiles failed"):
+        with pytest.raises(RuntimeError, match="boom"):
             await resolve_session_config(None, "zz", "locked")
 
     @pytest.mark.asyncio
-    async def test_swallowed_cancellation_raises(self, test_config):
+    async def test_cancellation_propagates(self, test_config):
         import asyncio
 
         async def set_profiles(user, language):
@@ -1013,7 +1015,7 @@ class TestResolveSessionConfig:
 
         self._register(test_config, set_profiles)
 
-        with pytest.raises(RuntimeError, match="set_chat_profiles failed"):
+        with pytest.raises(asyncio.CancelledError):
             await resolve_session_config(None, "en-US", "locked")
 
     @pytest.mark.asyncio
@@ -1054,7 +1056,7 @@ class TestResolveSessionConfig:
         test_config.code.set_chat_profiles = only_locked
 
         if inner_raises:
-            with pytest.raises(RuntimeError, match="set_chat_profiles failed"):
+            with pytest.raises(RuntimeError, match="inner boom"):
                 await resolve_session_config(None, "en-US", "open")
         else:
             # "open" isn't offered, so the default ("locked") applies
@@ -1062,26 +1064,53 @@ class TestResolveSessionConfig:
             assert cfg.features.spontaneous_file_upload.enabled is False
 
     @pytest.mark.asyncio
-    async def test_failure_state_does_not_leak_between_calls(self, test_config):
-        from chainlit.utils import swallowed_user_function_error
+    @pytest.mark.parametrize("schedule", ["create_task", "gather"])
+    async def test_failure_in_a_child_task_raises(self, test_config, schedule):
+        """An app decorator that runs the registered callback in a task."""
+        import asyncio
+        import functools
 
-        fail = True
+        async def set_profiles(user, language):
+            raise RuntimeError("child boom")
+
+        self._register(test_config, set_profiles)
+        registered = test_config.code.set_chat_profiles
+
+        @functools.wraps(registered)
+        async def in_task(user, language):
+            if schedule == "create_task":
+                return await asyncio.create_task(registered(user, language))
+            (result,) = await asyncio.gather(registered(user, language))
+            return result
+
+        test_config.code.set_chat_profiles = in_task
+
+        with pytest.raises(RuntimeError, match="child boom"):
+            await resolve_session_config(None, "en-US", "locked")
+
+    @pytest.mark.asyncio
+    async def test_handled_failure_of_another_callback_is_not_a_failure(
+        self, test_config
+    ):
+        """The profiles callback recovers from an optional wrapped helper
+        failing: its valid result stands."""
+        from chainlit.utils import wrap_user_function
+
+        async def optional_helper():
+            raise RuntimeError("helper boom")
+
+        helper = wrap_user_function(optional_helper)  # swallows, returns None
         profiles = self._profiles()
 
         async def set_profiles(user, language):
-            if fail:
-                raise RuntimeError("boom")
+            await helper()
             return profiles
 
         self._register(test_config, set_profiles)
-        with pytest.raises(RuntimeError):
-            await resolve_session_config(None, "en-US", "locked")
-        fail = False
 
         cfg = await resolve_session_config(None, "en-US", "locked")
 
         assert cfg.features.spontaneous_file_upload.enabled is False
-        assert swallowed_user_function_error.get() is None
 
     @pytest.mark.asyncio
     async def test_callback_returning_no_profiles_uses_global_config(self, test_config):

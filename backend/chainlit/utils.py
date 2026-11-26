@@ -3,9 +3,8 @@ import importlib
 import inspect
 import os
 from asyncio import CancelledError
-from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Callable, Optional
+from typing import Callable
 
 import click
 from fastapi import FastAPI, Request
@@ -28,21 +27,17 @@ def timestamp_utc(timestamp: float):
     return dt.isoformat() + "Z"
 
 
-# Set by `wrap_user_function`'s wrapper when it swallows an exception from
-# the user function, so a caller that must fail closed can tell a failure
-# from a None result, however the wrapper is nested in an app's decorators
-# (a directly awaited coroutine runs in its caller's context).
-swallowed_user_function_error: ContextVar[Optional[BaseException]] = ContextVar(
-    "swallowed_user_function_error", default=None
-)
-
-
-def wrap_user_function(user_function: Callable, with_task=False) -> Callable:
+def wrap_user_function(
+    user_function: Callable, with_task=False, reraise=False
+) -> Callable:
     """
     Wraps a user-defined function to accept arguments as a dictionary.
 
     Args:
         user_function (Callable): The user-defined function to wrap.
+        reraise (bool): Let the user function's exceptions propagate to the
+            caller (which then handles and logs them) instead of logging
+            them and returning None.
 
     Returns:
         Callable: The wrapped function.
@@ -67,10 +62,12 @@ def wrap_user_function(user_function: Callable, with_task=False) -> Callable:
                 return await user_function(**params_values)
             else:
                 return user_function(**params_values)
-        except CancelledError as e:
-            swallowed_user_function_error.set(e)
+        except CancelledError:
+            if reraise:
+                raise
         except Exception as e:
-            swallowed_user_function_error.set(e)
+            if reraise:
+                raise
             logger.exception(e)
             if with_task:
                 from chainlit.message import ErrorMessage
