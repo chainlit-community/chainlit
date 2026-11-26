@@ -2155,15 +2155,26 @@ _MIME_ESSENCE_RE = re.compile(
 )
 
 
+_CHARSET_PARAM_RE = re.compile(
+    r"^\s*charset\s*=\s*\"?([A-Za-z0-9._:-]{1,40})\"?\s*$", re.IGNORECASE
+)
+
+
 def _served_mime_type(claimed: str) -> tuple[str, bool]:
     """Return the Content-Type to serve a stored file with, and whether it
     may be rendered inline."""
-    essence = claimed.split(";", 1)[0].strip().lower()
+    essence, *params = claimed.split(";")
+    essence = essence.strip().lower()
     if not _MIME_ESSENCE_RE.match(essence):
         return "application/octet-stream", False
     inline = essence in _INLINE_SAFE_MIME_TYPES or essence.startswith(
         _INLINE_SAFE_MIME_PREFIXES
     )
+    # Keep a well-formed charset, so non-UTF-8 text isn't served as UTF-8
+    # (Starlette adds `charset=utf-8` to text/* types that have none).
+    for param in params:
+        if match := _CHARSET_PARAM_RE.match(param):
+            return f"{essence}; charset={match.group(1)}", inline
     return essence, inline
 
 

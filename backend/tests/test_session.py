@@ -997,9 +997,9 @@ class TestResolveSessionConfig:
         assert await resolve_session_config(None, "en-US", "locked") is test_config
 
     @pytest.mark.asyncio
-    async def test_invalid_overrides_fall_back_to_global_config(
-        self, test_config, monkeypatch
-    ):
+    async def test_invalid_overrides_raise(self, test_config, monkeypatch):
+        """Fail closed: /project/settings errors on them too, and the session
+        must not silently run without the profile's restrictions."""
         profiles = self._profiles()
 
         async def set_profiles(user, language):
@@ -1012,7 +1012,8 @@ class TestResolveSessionConfig:
             Mock(side_effect=ValueError("bad override")),
         )
 
-        assert await resolve_session_config(None, "en-US", "locked") is test_config
+        with pytest.raises(ValueError, match="bad override"):
+            await resolve_session_config(None, "en-US", "locked")
 
 
 def _unregister(session):

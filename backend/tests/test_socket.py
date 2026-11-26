@@ -889,6 +889,16 @@ class TestConnectResolvesSessionConfig:
         assert ws_session.call_args.kwargs["config"] is session_config
 
     @pytest.mark.asyncio
+    async def test_invalid_profile_config_refuses_connection(self, monkeypatch):
+        _, resolve, ws_session, _ = self._patch(monkeypatch, [False, False])
+        resolve.side_effect = ValueError("bad override")
+
+        with pytest.raises(ConnectionRefusedError, match="chat profile"):
+            await connect("sid", {}, self.AUTH)
+
+        ws_session.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_existing_session_is_restored_without_resolving(self, monkeypatch):
         _, resolve, ws_session, _ = self._patch(monkeypatch, [True])
 
@@ -920,7 +930,7 @@ class TestResumeThreadResolvesSessionConfig:
         session.config = Mock(name="connect_config")
         return session
 
-    async def _resume(self, session, monkeypatch, metadata):
+    async def _resume(self, session, monkeypatch, metadata, resolve_error=None):
         from chainlit.user_session import user_sessions
 
         data_layer = AsyncMock()
@@ -929,7 +939,7 @@ class TestResumeThreadResolvesSessionConfig:
             "metadata": metadata,
         }
         resolved = Mock(name="resumed_config")
-        resolve = AsyncMock(return_value=resolved)
+        resolve = AsyncMock(return_value=resolved, side_effect=resolve_error)
         monkeypatch.setattr("chainlit.socket.resolve_session_config", resolve)
         monkeypatch.setattr("chainlit.socket.get_data_layer", lambda: data_layer)
         try:
@@ -960,4 +970,20 @@ class TestResumeThreadResolvesSessionConfig:
         )
 
         resolve.assert_not_awaited()
+        assert session.config is connect_config
+
+    @pytest.mark.asyncio
+    async def test_failed_resolution_keeps_profile_and_config(self, monkeypatch):
+        session = self._session("open")
+        connect_config = session.config
+
+        with pytest.raises(ValueError, match="bad override"):
+            await self._resume(
+                session,
+                monkeypatch,
+                {"chat_profile": "locked"},
+                resolve_error=ValueError("bad override"),
+            )
+
+        assert session.chat_profile == "open"
         assert session.config is connect_config

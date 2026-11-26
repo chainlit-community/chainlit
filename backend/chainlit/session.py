@@ -339,6 +339,12 @@ async def resolve_session_config(
     the backend must enforce them too (CVE-2026-110699). The result shares
     the global `config.code`, so callbacks registered or reloaded later are
     always the current ones.
+
+    If `set_chat_profiles` raises, `wrap_user_function` logs it and returns
+    None, and `/project/settings` then offers no profiles and the global
+    features; this returns the global config too, so backend and UI agree.
+    Overrides that don't validate raise, as they do in `/project/settings`:
+    the session must not silently run without them.
     """
     from chainlit.config import config as global_config
 
@@ -346,7 +352,6 @@ async def resolve_session_config(
         return global_config
 
     # Same arguments as `/project/settings`, so both see the same profiles.
-    # Exceptions are logged by `wrap_user_function`, which then returns None.
     profiles = await global_config.code.set_chat_profiles(
         user, global_config.ui.language or language
     )
@@ -355,15 +360,7 @@ async def resolve_session_config(
     if not overrides:
         return global_config
 
-    try:
-        cfg = global_config.with_overrides(overrides)
-    except Exception:
-        logger.exception(
-            "Invalid config_overrides for chat profile %r; using the global config",
-            profile.name if profile else None,
-        )
-        return global_config
-
+    cfg = global_config.with_overrides(overrides)
     cfg.code = global_config.code
     return cfg
 

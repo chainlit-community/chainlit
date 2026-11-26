@@ -101,12 +101,15 @@ async def resume_thread(session: WebsocketSession):
         user_sessions[session.id] = metadata.copy()
         if chat_profile := metadata.get("chat_profile"):
             if chat_profile != session.chat_profile:
-                session.chat_profile = chat_profile
                 # The resumed thread's profile replaces the one the client
                 # connected with, so its config_overrides apply from now on.
-                session.config = await resolve_session_config(
+                # Resolve first, then swap both without an await in between,
+                # so the session never pairs one profile with another's config.
+                session_config = await resolve_session_config(
                     session.user, session.language, chat_profile
                 )
+                session.chat_profile = chat_profile
+                session.config = session_config
         if chat_settings := metadata.get("chat_settings"):
             session.chat_settings = chat_settings
 
@@ -208,9 +211,13 @@ async def connect(sid: str, environ: WSGIEnvironment, auth: WebSocketSessionAuth
     # Resolve the profile's config before the session is registered: from
     # then on REST calls can find it by id, and must not see it with the
     # global config instead (CVE-2026-110699).
-    session_config = await resolve_session_config(
-        user, parse_accept_language(environ), chat_profile
-    )
+    try:
+        session_config = await resolve_session_config(
+            user, parse_accept_language(environ), chat_profile
+        )
+    except Exception:
+        logger.exception("Could not apply the chat profile's config_overrides.")
+        raise ConnectionRefusedError("invalid chat profile configuration")
 
     # A concurrent connect may have registered this session id during the
     # await above; restore it (with the owner check) rather than replace it.

@@ -852,6 +852,18 @@ def test_upload_file_size_uses_session_config(
         # downloads (CVE-2026-110699)
         ("text/html", "text/html; charset=utf-8", "attachment"),
         ("Text/HTML; charset=utf-8", "text/html; charset=utf-8", "attachment"),
+        # a well-formed charset is kept, so non-UTF-8 text decodes correctly
+        (
+            "text/plain; charset=iso-8859-1",
+            "text/plain; charset=iso-8859-1",
+            "inline",
+        ),
+        (
+            'text/plain; format=flowed; CHARSET="windows-1252"',
+            "text/plain; charset=windows-1252",
+            "inline",
+        ),
+        ("text/plain; charset=a,text/html", "text/plain; charset=utf-8", "inline"),
         ("application/xhtml+xml", "application/xhtml+xml", "attachment"),
         ("image/svg+xml", "image/svg+xml", "attachment"),
         ("text/xml", "text/xml; charset=utf-8", "attachment"),
