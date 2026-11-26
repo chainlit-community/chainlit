@@ -68,18 +68,16 @@ async def upload_element_file(
             object_key=object_key, data=data, mime=stored_mime, overwrite=True
         )
     if _accepts_content_disposition(storage.upload_file):
-        try:
-            return await storage.upload_file(
-                object_key=object_key,
-                data=data,
-                mime=stored_mime,
-                overwrite=True,
-                content_disposition=disposition,
-            )
-        except TypeError as e:
-            # A legacy client behind a `*args, **kwargs` wrapper.
-            if "content_disposition" not in str(e):
-                raise
+        # Called once: a legacy client hidden behind a `*args, **kwargs`
+        # wrapper fails with a TypeError (fails closed). Retrying without
+        # the keyword could repeat an upload that already ran.
+        return await storage.upload_file(
+            object_key=object_key,
+            data=data,
+            mime=stored_mime,
+            overwrite=True,
+            content_disposition=disposition,
+        )
     # A storage client written before `content_disposition` existed can't
     # make this a download. Active documents already have an opaque type;
     # SVG is the other type that runs script when opened, so it gets one

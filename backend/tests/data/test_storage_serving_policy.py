@@ -238,14 +238,34 @@ def _legacy_behind_wrapper():
 
 
 @pytest.mark.asyncio
-async def test_wrapped_legacy_client_falls_back():
+async def test_wrapped_legacy_client_fails_closed():
+    """Undetectable behind the wrapper: the upload fails instead of storing
+    a renderable SVG, and is not retried."""
     from chainlit.data.utils import upload_element_file
 
     storage = _legacy_behind_wrapper()
 
-    await upload_element_file(storage, "k", b"x", "image/svg+xml", "e.svg")
+    with pytest.raises(TypeError, match="content_disposition"):
+        await upload_element_file(storage, "k", b"x", "image/svg+xml", "e.svg")
 
-    assert storage.calls == [{"object_key": "k", "mime": "application/octet-stream"}]
+    assert storage.calls == []
+
+
+@pytest.mark.asyncio
+async def test_client_errors_mentioning_the_parameter_propagate_once():
+    from chainlit.data.utils import upload_element_file
+
+    class Failing:
+        calls = 0
+
+        async def upload_file(self, **kwargs):
+            Failing.calls += 1
+            raise TypeError("invalid content_disposition metadata")
+
+    with pytest.raises(TypeError, match="invalid content_disposition"):
+        await upload_element_file(Failing(), "k", b"x", "image/svg+xml", "e.svg")
+
+    assert Failing.calls == 1
 
 
 @pytest.mark.asyncio
