@@ -174,6 +174,11 @@ class TestElementBase:
         assert Element.infer_type_from_mime("video/mp4") == "video"
         assert Element.infer_type_from_mime("text/plain") == "file"
         assert Element.infer_type_from_mime("application/json") == "file"
+        # the type itself decides, not a substring of the claimed MIME type
+        assert Element.infer_type_from_mime("text/html; x=image") == "file"
+        assert Element.infer_type_from_mime("application/x-audio-ish") == "file"
+        assert Element.infer_type_from_mime("IMAGE/PNG") == "image"
+        assert Element.infer_type_from_mime("image/svg+xml") == "image"
 
 
 @pytest.mark.asyncio

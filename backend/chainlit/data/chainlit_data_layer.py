@@ -10,6 +10,7 @@ from chainlit.data.base import BaseDataLayer
 from chainlit.data.storage_clients.base import BaseStorageClient
 from chainlit.data.utils import queue_until_user_message
 from chainlit.element import ElementDict
+from chainlit.file_serving import storage_object_headers
 from chainlit.logger import logger
 from chainlit.step import StepDict
 from chainlit.types import (
@@ -23,14 +24,13 @@ from chainlit.types import (
 )
 from chainlit.user import PersistedUser, User
 
-# Import for runtime usage (isinstance checks)
+# No longer used here; kept so existing imports of this name keep working.
 try:
     from chainlit.data.storage_clients.gcs import GCSStorageClient
 except ImportError:
     GCSStorageClient = None  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
-    from chainlit.data.storage_clients.gcs import GCSStorageClient
     from chainlit.element import Element, ElementDict
     from chainlit.step import StepDict
 
@@ -195,18 +195,14 @@ class ChainlitDataLayer(BaseDataLayer):
                 else:
                     path = f"files/{element.id}"
 
-                content_disposition = (
-                    f'attachment; filename="{element.name}"'
-                    if not (
-                        GCSStorageClient is not None
-                        and isinstance(self.storage_client, GCSStorageClient)
-                    )
-                    else None
+                # Same serving policy as /project/file (CVE-2026-110699).
+                mime, content_disposition = storage_object_headers(
+                    element.mime, element.name
                 )
                 await self.storage_client.upload_file(
                     object_key=path,
                     data=content,
-                    mime=element.mime or "application/octet-stream",
+                    mime=mime,
                     overwrite=True,
                     content_disposition=content_disposition,
                 )

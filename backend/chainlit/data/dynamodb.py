@@ -18,6 +18,7 @@ from chainlit.data.base import BaseDataLayer
 from chainlit.data.storage_clients.base import BaseStorageClient
 from chainlit.data.utils import queue_until_user_message
 from chainlit.element import ElementDict
+from chainlit.file_serving import storage_object_headers
 from chainlit.logger import logger
 from chainlit.step import StepDict
 from chainlit.types import (
@@ -274,11 +275,14 @@ class DynamoDBDataLayer(BaseDataLayer):
         user_folder = getattr(context_user, "id", "unknown")
         file_object_key = f"{user_folder}/{element.thread_id}/{element.id}"
 
+        # Same serving policy as /project/file (CVE-2026-110699).
+        mime, content_disposition = storage_object_headers(element.mime, element.name)
         uploaded_file = await self.storage_provider.upload_file(
             object_key=file_object_key,
             data=content,
-            mime=element.mime,
+            mime=mime,
             overwrite=True,
+            content_disposition=content_disposition,
         )
         if not uploaded_file:
             raise ValueError(

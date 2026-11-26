@@ -22,6 +22,7 @@ from syncer import asyncio
 
 from chainlit.context import context
 from chainlit.data import get_data_layer
+from chainlit.file_serving import mime_essence
 from chainlit.logger import logger
 
 mime_types = {
@@ -195,16 +196,19 @@ class Element:
     @classmethod
     def infer_type_from_mime(cls, mime_type: str):
         """Infer the element type from a mime type. Useful to know which element to instantiate from a file upload."""
-        if "image" in mime_type:
+        # Match the type itself, not a substring anywhere in the claimed
+        # MIME type (`text/html; x=image` is not an image).
+        essence = mime_essence(mime_type)
+        if essence.startswith("image/"):
             return "image"
 
-        elif mime_type == "application/pdf":
+        elif essence == "application/pdf":
             return "pdf"
 
-        elif "audio" in mime_type:
+        elif essence.startswith("audio/"):
             return "audio"
 
-        elif "video" in mime_type:
+        elif essence.startswith("video/"):
             return "video"
 
         else:

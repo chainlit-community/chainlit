@@ -54,9 +54,13 @@ class GCSStorageClient(BaseStorageClient):
         data: Union[bytes, str],
         mime: str = "application/octet-stream",
         overwrite: bool = True,
+        content_disposition: str | None = None,
     ) -> Dict[str, Any]:
         try:
             blob = self.bucket.blob(object_key)
+            if content_disposition is not None:
+                # Stored as object metadata; GCS serves it with the object.
+                blob.content_disposition = content_disposition
 
             if not overwrite and blob.exists():
                 raise Exception(
@@ -86,7 +90,7 @@ class GCSStorageClient(BaseStorageClient):
         content_disposition: str | None = None,
     ) -> Dict[str, Any]:
         return await make_async(self.sync_upload_file)(
-            object_key, data, mime, overwrite
+            object_key, data, mime, overwrite, content_disposition
         )
 
     def sync_delete_file(self, object_key: str) -> bool:
