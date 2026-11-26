@@ -329,24 +329,27 @@ def select_chat_profile(
 
 
 async def _call_set_chat_profiles(callback: Callable, user, language: str):
-    """Call the app's `set_chat_profiles` callback, letting exceptions through.
+    """Call the app's `set_chat_profiles` callback as `/project/settings`
+    does, but raise if it failed.
 
     `@cl.set_chat_profiles` registers it through `wrap_user_function`, which
     logs exceptions and returns None: indistinguishable from an app that
-    offers no profiles. For that wrapper only (identified by its marker, so
-    an app's own decorators always run), call the function it wraps with the
-    same by-name argument mapping. A callback assigned to
-    `config.code.set_chat_profiles` directly is called as
-    `/project/settings` calls it.
+    offers no profiles. The wrapper records what it swallowed in
+    `swallowed_user_function_error`, which is checked here. The callback is
+    called as is, so an app's own decorators around it always run.
     """
-    func = getattr(callback, "__chainlit_user_function__", None)
-    if func is None:
+    from chainlit.utils import swallowed_user_function_error
+
+    token = swallowed_user_function_error.set(None)
+    try:
         result = callback(user, language)
-    else:
-        params = list(inspect.signature(func).parameters)
-        result = func(**dict(zip(params, (user, language))))
-    if inspect.isawaitable(result):
-        result = await result
+        if inspect.isawaitable(result):
+            result = await result
+        error = swallowed_user_function_error.get()
+    finally:
+        swallowed_user_function_error.reset(token)
+    if error is not None:
+        raise RuntimeError("set_chat_profiles failed") from error
     return result
 
 

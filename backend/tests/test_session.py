@@ -1001,8 +1001,87 @@ class TestResolveSessionConfig:
         else:
             self._register(test_config, set_profiles)
 
-        with pytest.raises(RuntimeError, match="boom"):
+        with pytest.raises(RuntimeError, match=r"boom|set_chat_profiles failed"):
             await resolve_session_config(None, "zz", "locked")
+
+    @pytest.mark.asyncio
+    async def test_swallowed_cancellation_raises(self, test_config):
+        import asyncio
+
+        async def set_profiles(user, language):
+            raise asyncio.CancelledError
+
+        self._register(test_config, set_profiles)
+
+        with pytest.raises(RuntimeError, match="set_chat_profiles failed"):
+            await resolve_session_config(None, "en-US", "locked")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("inner_raises", [False, True])
+    async def test_app_decorator_around_registered_callback(
+        self, test_config, inner_raises
+    ):
+        """An app wraps the registered callback (wrap_user_function's
+        wrapper) in its own functools.wraps filter and assigns it back: the
+        filter must run, and a failure inside must still fail closed."""
+        import functools
+
+        from chainlit.types import ChatProfile
+
+        all_profiles = [
+            ChatProfile(
+                name="locked",
+                markdown_description="",
+                default=True,
+                config_overrides=_upload_override(False),
+            ),
+            ChatProfile(name="open", markdown_description=""),
+        ]
+
+        async def set_profiles(user, language):
+            if inner_raises:
+                raise RuntimeError("inner boom")
+            return all_profiles
+
+        self._register(test_config, set_profiles)
+        registered = test_config.code.set_chat_profiles
+
+        @functools.wraps(registered)
+        async def only_locked(user, language):
+            profiles = await registered(user, language)
+            return [p for p in profiles or [] if p.name == "locked"]
+
+        test_config.code.set_chat_profiles = only_locked
+
+        if inner_raises:
+            with pytest.raises(RuntimeError, match="set_chat_profiles failed"):
+                await resolve_session_config(None, "en-US", "open")
+        else:
+            # "open" isn't offered, so the default ("locked") applies
+            cfg = await resolve_session_config(None, "en-US", "open")
+            assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    async def test_failure_state_does_not_leak_between_calls(self, test_config):
+        from chainlit.utils import swallowed_user_function_error
+
+        fail = True
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            if fail:
+                raise RuntimeError("boom")
+            return profiles
+
+        self._register(test_config, set_profiles)
+        with pytest.raises(RuntimeError):
+            await resolve_session_config(None, "en-US", "locked")
+        fail = False
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert cfg.features.spontaneous_file_upload.enabled is False
+        assert swallowed_user_function_error.get() is None
 
     @pytest.mark.asyncio
     async def test_callback_returning_no_profiles_uses_global_config(self, test_config):

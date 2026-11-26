@@ -3,8 +3,9 @@ import importlib
 import inspect
 import os
 from asyncio import CancelledError
+from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Callable
+from typing import Callable, Optional
 
 import click
 from fastapi import FastAPI, Request
@@ -25,6 +26,15 @@ def utc_now():
 def timestamp_utc(timestamp: float):
     dt = datetime.fromtimestamp(timestamp, UTC).replace(tzinfo=None)
     return dt.isoformat() + "Z"
+
+
+# Set by `wrap_user_function`'s wrapper when it swallows an exception from
+# the user function, so a caller that must fail closed can tell a failure
+# from a None result, however the wrapper is nested in an app's decorators
+# (a directly awaited coroutine runs in its caller's context).
+swallowed_user_function_error: ContextVar[Optional[BaseException]] = ContextVar(
+    "swallowed_user_function_error", default=None
+)
 
 
 def wrap_user_function(user_function: Callable, with_task=False) -> Callable:
@@ -57,9 +67,10 @@ def wrap_user_function(user_function: Callable, with_task=False) -> Callable:
                 return await user_function(**params_values)
             else:
                 return user_function(**params_values)
-        except CancelledError:
-            pass
+        except CancelledError as e:
+            swallowed_user_function_error.set(e)
         except Exception as e:
+            swallowed_user_function_error.set(e)
             logger.exception(e)
             if with_task:
                 from chainlit.message import ErrorMessage
@@ -71,10 +82,6 @@ def wrap_user_function(user_function: Callable, with_task=False) -> Callable:
             if with_task:
                 await context.emitter.task_end()
 
-    # Marks this exact wrapper (unlike `__wrapped__`, which any decorator
-    # using functools.wraps sets), for callers that must see the user
-    # function's exceptions instead of a swallowed None.
-    wrapper.__chainlit_user_function__ = user_function  # type: ignore[attr-defined]
     return wrapper
 
 
