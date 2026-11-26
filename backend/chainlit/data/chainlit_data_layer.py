@@ -195,9 +195,10 @@ class ChainlitDataLayer(BaseDataLayer):
                 else:
                     path = f"files/{element.id}"
 
-                # Same serving policy as /project/file (CVE-2026-110699).
+                # Normalized type; script-capable types can't be stored inline
+                # (CVE-2026-110699). Every file stays a download, as before.
                 mime, content_disposition = storage_object_headers(
-                    element.mime, element.name
+                    element.mime, element.name, safe_disposition="attachment"
                 )
                 await self.storage_client.upload_file(
                     object_key=path,

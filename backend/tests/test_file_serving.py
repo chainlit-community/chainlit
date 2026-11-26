@@ -48,6 +48,7 @@ def test_mime_essence(mime, expected):
             "inline; filename*=utf-8''x%0D%0ASet-Cookie%3A%20a%3Db",
         ),
         ("résumé.pdf", "inline; filename*=utf-8''r%C3%A9sum%C3%A9.pdf"),
+        ("reports/r.pdf", "inline; filename*=utf-8''reports%2Fr.pdf"),
     ],
 )
 def test_content_disposition_encodes_the_filename(filename, expected):
@@ -55,17 +56,20 @@ def test_content_disposition_encodes_the_filename(filename, expected):
 
 
 @pytest.mark.parametrize(
-    ("claimed", "filename", "expected"),
+    ("claimed", "safe_disposition", "expected"),
     [
-        ("image/png", "p.png", ("image/png", 'inline; filename="p.png"')),
-        ("image/svg+xml", "e.svg", ("image/svg+xml", 'attachment; filename="e.svg"')),
-        ("text/html", "x.html", ("text/html", 'attachment; filename="x.html"')),
+        ("image/png", None, ("image/png", None)),
+        ("image/png", "inline", ("image/png", 'inline; filename="f"')),
+        ("image/png", "attachment", ("image/png", 'attachment; filename="f"')),
+        # script-capable or malformed: always an attachment
+        ("image/svg+xml", None, ("image/svg+xml", 'attachment; filename="f"')),
+        ("text/html", "inline", ("text/html", 'attachment; filename="f"')),
         (
             "video/mp4, text/html",
-            "v.mp4",
-            ("application/octet-stream", 'attachment; filename="v.mp4"'),
+            None,
+            ("application/octet-stream", 'attachment; filename="f"'),
         ),
     ],
 )
-def test_storage_object_headers(claimed, filename, expected):
-    assert storage_object_headers(claimed, filename) == expected
+def test_storage_object_headers(claimed, safe_disposition, expected):
+    assert storage_object_headers(claimed, "f", safe_disposition) == expected

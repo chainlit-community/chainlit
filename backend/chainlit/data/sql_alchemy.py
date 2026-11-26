@@ -616,7 +616,8 @@ class SQLAlchemyDataLayer(BaseDataLayer):
         if not element.mime:
             element.mime = "application/octet-stream"
 
-        # Same serving policy as /project/file (CVE-2026-110699).
+        # Normalized type; script-capable types are stored as attachments
+        # (CVE-2026-110699). Others keep no disposition, as before.
         mime, content_disposition = storage_object_headers(element.mime, element.name)
         uploaded_file = await self.storage_provider.upload_file(
             object_key=file_object_key,

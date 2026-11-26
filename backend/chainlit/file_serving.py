@@ -66,21 +66,32 @@ def content_disposition(
     disposition_type: Literal["inline", "attachment"], filename: Optional[str]
 ) -> str:
     """A Content-Disposition value; a filename that isn't plain ASCII is
-    percent-encoded (RFC 6266 / RFC 8187), so it can't break the header.
-    Same encoding as Starlette's FileResponse."""
+    percent-encoded (RFC 6266 / RFC 8187), so it can't break the header."""
     if not filename:
         return disposition_type
-    quoted = quote(filename)
+    # safe="": RFC 8187 allows no literal "/" in an extended value.
+    quoted = quote(filename, safe="")
     if quoted != filename:
         return f"{disposition_type}; filename*=utf-8''{quoted}"
     return f'{disposition_type}; filename="{filename}"'
 
 
 def storage_object_headers(
-    claimed_mime: Optional[str], filename: Optional[str]
-) -> tuple[str, str]:
+    claimed_mime: Optional[str],
+    filename: Optional[str],
+    safe_disposition: Optional[Literal["inline", "attachment"]] = None,
+) -> tuple[str, Optional[str]]:
     """The Content-Type and Content-Disposition to store a user-influenced
-    file with in a storage provider (S3, GCS, Azure), which then serves it
-    with these: the same policy as `/project/file`."""
+    file with in a storage provider (S3, GCS, Azure), which serves it with
+    these.
+
+    The type is normalized as for `/project/file`. A type that could run
+    script is always an `attachment`. For the other types the disposition
+    is `safe_disposition`, or None to set none (the provider's default,
+    which browsers render inline).
+    """
     mime, inline = served_mime_type(claimed_mime)
-    return mime, content_disposition("inline" if inline else "attachment", filename)
+    disposition_type = safe_disposition if inline else "attachment"
+    if disposition_type is None:
+        return mime, None
+    return mime, content_disposition(disposition_type, filename)

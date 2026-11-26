@@ -10,24 +10,40 @@ from chainlit.data.chainlit_data_layer import ChainlitDataLayer
 from chainlit.data.dynamodb import DynamoDBDataLayer
 from chainlit.element import File
 
+# claimed mime, name, stored mime, stored disposition for script-free types
+# in the Chainlit data layer (always a download) and in the SQLAlchemy and
+# DynamoDB ones (none set, as before)
 CASES = [
-    # claimed mime, name, stored mime, stored Content-Disposition
-    ("image/png", "p.png", "image/png", 'inline; filename="p.png"'),
-    ("application/pdf", "r.pdf", "application/pdf", 'inline; filename="r.pdf"'),
-    ("image/svg+xml", "e.svg", "image/svg+xml", 'attachment; filename="e.svg"'),
-    ("text/html", "x.html", "text/html", 'attachment; filename="x.html"'),
+    ("image/png", "p.png", "image/png", 'attachment; filename="p.png"', None),
     (
-        "video/mp4, text/html",
-        "v.mp4",
-        "application/octet-stream",
-        'attachment; filename="v.mp4"',
+        "application/pdf",
+        "r.pdf",
+        "application/pdf",
+        'attachment; filename="r.pdf"',
+        None,
     ),
-    (None, "d.bin", "application/octet-stream", 'attachment; filename="d.bin"'),
+    # script-capable or malformed: an attachment everywhere
+    *(
+        (
+            claimed,
+            name,
+            mime,
+            f'attachment; filename="{name}"',
+            f'attachment; filename="{name}"',
+        )
+        for claimed, name, mime in [
+            ("image/svg+xml", "e.svg", "image/svg+xml"),
+            ("text/html", "x.html", "text/html"),
+            ("video/mp4, text/html", "v.mp4", "application/octet-stream"),
+            (None, "d.bin", "application/octet-stream"),
+        ]
+    ),
     (
-        "text/plain",
-        'a"; b.txt',
-        "text/plain",
-        "inline; filename*=utf-8''a%22%3B%20b.txt",
+        "text/html",
+        'a"; b.html',
+        "text/html",
+        "attachment; filename*=utf-8''a%22%3B%20b.html",
+        "attachment; filename*=utf-8''a%22%3B%20b.html",
     ),
 ]
 
@@ -49,9 +65,9 @@ def _assert_stored(storage, mime, disposition):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("claimed", "name", "mime", "disposition"), CASES)
+@pytest.mark.parametrize(("claimed", "name", "mime", "disposition", "_"), CASES)
 async def test_chainlit_data_layer(
-    mock_chainlit_context, mock_storage_client, claimed, name, mime, disposition
+    mock_chainlit_context, mock_storage_client, claimed, name, mime, disposition, _
 ):
     async with mock_chainlit_context:
         layer = ChainlitDataLayer(
@@ -65,9 +81,9 @@ async def test_chainlit_data_layer(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("claimed", "name", "mime", "disposition"), CASES)
+@pytest.mark.parametrize(("claimed", "name", "mime", "_", "disposition"), CASES)
 async def test_dynamodb_data_layer(
-    mock_chainlit_context, mock_storage_client, claimed, name, mime, disposition
+    mock_chainlit_context, mock_storage_client, claimed, name, mime, _, disposition
 ):
     async with mock_chainlit_context:
         layer = DynamoDBDataLayer(

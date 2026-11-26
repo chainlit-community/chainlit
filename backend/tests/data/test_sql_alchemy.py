@@ -152,7 +152,7 @@ async def test_create_and_get_element(
 @pytest.mark.parametrize(
     ("claimed", "name", "mime", "disposition"),
     [
-        ("image/png", "p.png", "image/png", 'inline; filename="p.png"'),
+        ("image/png", "p.png", "image/png", None),
         ("image/svg+xml", "e.svg", "image/svg+xml", 'attachment; filename="e.svg"'),
         (
             "video/mp4, text/html",

@@ -275,7 +275,8 @@ class DynamoDBDataLayer(BaseDataLayer):
         user_folder = getattr(context_user, "id", "unknown")
         file_object_key = f"{user_folder}/{element.thread_id}/{element.id}"
 
-        # Same serving policy as /project/file (CVE-2026-110699).
+        # Normalized type; script-capable types are stored as attachments
+        # (CVE-2026-110699). Others keep no disposition, as before.
         mime, content_disposition = storage_object_headers(element.mime, element.name)
         uploaded_file = await self.storage_provider.upload_file(
             object_key=file_object_key,
