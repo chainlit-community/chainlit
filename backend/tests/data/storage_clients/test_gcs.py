@@ -159,6 +159,53 @@ class TestGCSStorageClient:
             binary_data, content_type="text/plain"
         )
 
+    @pytest.mark.parametrize("disposition", ['attachment; filename="e.svg"', None])
+    def test_sync_upload_file_sets_content_disposition(
+        self, mock_gcs_client, disposition
+    ):
+        """Stored as object metadata, so GCS serves it (#30)."""
+        client = GCSStorageClient(
+            bucket_name="test-bucket",
+            project_id="test-project",
+            client_email="test@example.com",
+            private_key="test-key",
+        )
+        blob = mock_gcs_client["blob"]
+        blob.reset_mock()
+        blob.content_disposition = None
+
+        client.sync_upload_file(
+            object_key="k",
+            data=b"x",
+            mime="image/svg+xml",
+            content_disposition=disposition,
+        )
+
+        assert blob.content_disposition == disposition
+        blob.upload_from_string.assert_called_once_with(
+            b"x", content_type="image/svg+xml"
+        )
+
+    @pytest.mark.asyncio
+    async def test_upload_file_passes_content_disposition(self, mock_gcs_client):
+        client = GCSStorageClient(
+            bucket_name="test-bucket",
+            project_id="test-project",
+            client_email="test@example.com",
+            private_key="test-key",
+        )
+        blob = mock_gcs_client["blob"]
+        blob.reset_mock()
+
+        await client.upload_file(
+            object_key="k",
+            data=b"x",
+            mime="text/html",
+            content_disposition='attachment; filename="x.html"',
+        )
+
+        assert blob.content_disposition == 'attachment; filename="x.html"'
+
     def test_sync_upload_file_string_data(self, mock_gcs_client):
         """Test uploading string data to GCS."""
         client = GCSStorageClient(

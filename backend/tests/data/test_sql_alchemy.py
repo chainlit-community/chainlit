@@ -149,6 +149,53 @@ async def test_create_and_get_element(
     # The 'content' field is not part of the ElementDict, so we remove this assertion
 
 
+@pytest.mark.parametrize(
+    ("claimed", "name", "mime", "disposition"),
+    [
+        ("image/png", "p.png", "image/png", None),
+        ("image/svg+xml", "e.svg", "image/svg+xml", 'attachment; filename="e.svg"'),
+        (
+            "video/mp4, text/html",
+            "v.mp4",
+            "application/octet-stream",
+            'attachment; filename="v.mp4"',
+        ),
+    ],
+)
+async def test_create_element_stores_with_safe_serving_headers(
+    mock_chainlit_context,
+    data_layer: SQLAlchemyDataLayer,
+    mock_storage_client,
+    claimed,
+    name,
+    mime,
+    disposition,
+):
+    """Same serving policy as /project/file (CVE-2026-110699)."""
+    from unittest.mock import create_autospec
+
+    from chainlit.data.storage_clients.base import BaseStorageClient
+
+    # The in-tree clients declare `content_disposition`; a plain spec'd mock
+    # shows `**kwargs`, which may hide a legacy client.
+    storage = create_autospec(BaseStorageClient, instance=True)
+    storage.upload_file.return_value = {"url": "https://x", "object_key": "k"}
+    data_layer.storage_provider = storage
+    async with mock_chainlit_context:
+        element = Text(
+            id=str(uuid.uuid4()),
+            name=name,
+            mime=claimed,
+            content="<svg><script>alert(1)</script></svg>",
+            for_id="test_step_id",
+        )
+        await data_layer.create_element(element)
+
+    kwargs = storage.upload_file.call_args.kwargs
+    assert kwargs["mime"] == mime
+    assert kwargs.get("content_disposition") == disposition
+
+
 async def test_get_current_timestamp(data_layer: SQLAlchemyDataLayer):
     timestamp = await data_layer.get_current_timestamp()
     assert isinstance(timestamp, str)

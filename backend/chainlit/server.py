@@ -56,6 +56,7 @@ from chainlit.config import (
 )
 from chainlit.data import get_data_layer
 from chainlit.data.acl import is_thread_author
+from chainlit.file_serving import served_mime_type
 from chainlit.logger import logger
 from chainlit.markdown import get_markdown_str
 from chainlit.oauth_providers import get_oauth_provider
@@ -2125,7 +2126,7 @@ async def get_file(
         # XML, ...) is a download, so the app's origin can't be used to host
         # attacker pages (CVE-2026-110699). In-app rendering is unaffected:
         # <img>/<audio>/<video> and fetch() ignore Content-Disposition.
-        mime, inline = _served_mime_type(str(file["type"]))
+        mime, inline = served_mime_type(str(file["type"]))
         return FileResponse(
             file["path"],
             media_type=mime,
@@ -2135,53 +2136,6 @@ async def get_file(
         )
     else:
         raise HTTPException(status_code=404, detail="File not found")
-
-
-# Types served inline by `get_file`: browsers render them without running
-# script. Notably absent: text/html, image/svg+xml, XML and JavaScript.
-_INLINE_SAFE_MIME_TYPES = frozenset(
-    {
-        "application/pdf",
-        "image/apng",
-        "image/avif",
-        "image/bmp",
-        "image/gif",
-        "image/jpeg",
-        "image/png",
-        "image/webp",
-        "text/plain",
-    }
-)
-_INLINE_SAFE_MIME_PREFIXES = ("audio/", "video/")
-# A single RFC 9110 `type/subtype` token. Anything else (a comma-separated
-# list, which browsers may read as its last entry, or stray characters) is
-# served as an opaque download.
-_MIME_ESSENCE_RE = re.compile(
-    r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
-)
-
-
-_CHARSET_PARAM_RE = re.compile(
-    r"^\s*charset\s*=\s*\"?([A-Za-z0-9._:-]{1,40})\"?\s*$", re.IGNORECASE
-)
-
-
-def _served_mime_type(claimed: str) -> tuple[str, bool]:
-    """Return the Content-Type to serve a stored file with, and whether it
-    may be rendered inline."""
-    essence, *params = claimed.split(";")
-    essence = essence.strip().lower()
-    if not _MIME_ESSENCE_RE.match(essence):
-        return "application/octet-stream", False
-    inline = essence in _INLINE_SAFE_MIME_TYPES or (
-        essence.startswith(_INLINE_SAFE_MIME_PREFIXES) and not essence.endswith("+xml")
-    )
-    # Keep a well-formed charset, so non-UTF-8 text isn't served as UTF-8
-    # (Starlette adds `charset=utf-8` to text/* types that have none).
-    for param in params:
-        if match := _CHARSET_PARAM_RE.match(param):
-            return f"{essence}; charset={match.group(1)}", inline
-    return essence, inline
 
 
 @router.get("/favicon")

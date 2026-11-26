@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from chainlit.data.base import BaseDataLayer
 from chainlit.data.storage_clients.base import BaseStorageClient
-from chainlit.data.utils import queue_until_user_message
+from chainlit.data.utils import queue_until_user_message, upload_element_file
 from chainlit.element import ElementDict
 from chainlit.logger import logger
 from chainlit.step import StepDict
@@ -615,8 +615,14 @@ class SQLAlchemyDataLayer(BaseDataLayer):
         if not element.mime:
             element.mime = "application/octet-stream"
 
-        uploaded_file = await self.storage_provider.upload_file(
-            object_key=file_object_key, data=content, mime=element.mime, overwrite=True
+        # Normalized type; script-capable types are stored as attachments
+        # (CVE-2026-110699). Others keep no disposition, as before.
+        uploaded_file = await upload_element_file(
+            self.storage_provider,
+            object_key=file_object_key,
+            data=content,
+            mime=element.mime,
+            filename=element.name,
         )
         if not uploaded_file:
             raise ValueError(

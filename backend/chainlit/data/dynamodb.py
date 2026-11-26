@@ -16,7 +16,7 @@ from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from chainlit.context import context
 from chainlit.data.base import BaseDataLayer
 from chainlit.data.storage_clients.base import BaseStorageClient
-from chainlit.data.utils import queue_until_user_message
+from chainlit.data.utils import queue_until_user_message, upload_element_file
 from chainlit.element import ElementDict
 from chainlit.logger import logger
 from chainlit.step import StepDict
@@ -274,11 +274,14 @@ class DynamoDBDataLayer(BaseDataLayer):
         user_folder = getattr(context_user, "id", "unknown")
         file_object_key = f"{user_folder}/{element.thread_id}/{element.id}"
 
-        uploaded_file = await self.storage_provider.upload_file(
+        # Normalized type; script-capable types are stored as attachments
+        # (CVE-2026-110699). Others keep no disposition, as before.
+        uploaded_file = await upload_element_file(
+            self.storage_provider,
             object_key=file_object_key,
             data=content,
             mime=element.mime,
-            overwrite=True,
+            filename=element.name,
         )
         if not uploaded_file:
             raise ValueError(

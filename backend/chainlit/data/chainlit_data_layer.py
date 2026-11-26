@@ -8,7 +8,7 @@ import asyncpg  # type: ignore
 
 from chainlit.data.base import BaseDataLayer
 from chainlit.data.storage_clients.base import BaseStorageClient
-from chainlit.data.utils import queue_until_user_message
+from chainlit.data.utils import queue_until_user_message, upload_element_file
 from chainlit.element import ElementDict
 from chainlit.logger import logger
 from chainlit.step import StepDict
@@ -23,14 +23,13 @@ from chainlit.types import (
 )
 from chainlit.user import PersistedUser, User
 
-# Import for runtime usage (isinstance checks)
+# No longer used here; kept so existing imports of this name keep working.
 try:
     from chainlit.data.storage_clients.gcs import GCSStorageClient
 except ImportError:
     GCSStorageClient = None  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
-    from chainlit.data.storage_clients.gcs import GCSStorageClient
     from chainlit.element import Element, ElementDict
     from chainlit.step import StepDict
 
@@ -195,20 +194,17 @@ class ChainlitDataLayer(BaseDataLayer):
                 else:
                     path = f"files/{element.id}"
 
-                content_disposition = (
-                    f'attachment; filename="{element.name}"'
-                    if not (
-                        GCSStorageClient is not None
-                        and isinstance(self.storage_client, GCSStorageClient)
-                    )
-                    else None
-                )
-                await self.storage_client.upload_file(
+                # Normalized type; script-capable types are stored as
+                # downloads (CVE-2026-110699). Every file stays a download, as
+                # before.
+                await upload_element_file(
+                    self.storage_client,
                     object_key=path,
                     data=content,
-                    mime=element.mime or "application/octet-stream",
-                    overwrite=True,
-                    content_disposition=content_disposition,
+                    mime=element.mime,
+                    filename=element.name,
+                    safe_disposition="attachment",
+                    always_passed_disposition=True,
                 )
 
         else:
