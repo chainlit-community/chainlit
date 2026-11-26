@@ -71,6 +71,10 @@ def wrap_user_function(user_function: Callable, with_task=False) -> Callable:
             if with_task:
                 await context.emitter.task_end()
 
+    # Marks this exact wrapper (unlike `__wrapped__`, which any decorator
+    # using functools.wraps sets), for callers that must see the user
+    # function's exceptions instead of a swallowed None.
+    wrapper.__chainlit_user_function__ = user_function  # type: ignore[attr-defined]
     return wrapper
 
 

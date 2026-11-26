@@ -333,12 +333,18 @@ async def _call_set_chat_profiles(callback: Callable, user, language: str):
 
     `@cl.set_chat_profiles` registers it through `wrap_user_function`, which
     logs exceptions and returns None: indistinguishable from an app that
-    offers no profiles. So call the function it wraps (one level only, so an
-    app's own decorators still run), with the same by-name argument mapping.
+    offers no profiles. For that wrapper only (identified by its marker, so
+    an app's own decorators always run), call the function it wraps with the
+    same by-name argument mapping. A callback assigned to
+    `config.code.set_chat_profiles` directly is called as
+    `/project/settings` calls it.
     """
-    func = getattr(callback, "__wrapped__", callback)
-    params = list(inspect.signature(func).parameters)
-    result = func(**dict(zip(params, (user, language))))
+    func = getattr(callback, "__chainlit_user_function__", None)
+    if func is None:
+        result = callback(user, language)
+    else:
+        params = list(inspect.signature(func).parameters)
+        result = func(**dict(zip(params, (user, language))))
     if inspect.isawaitable(result):
         result = await result
     return result

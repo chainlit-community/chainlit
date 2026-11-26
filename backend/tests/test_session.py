@@ -1014,6 +1014,67 @@ class TestResolveSessionConfig:
         assert await resolve_session_config(None, "en-US", "locked") is test_config
 
     @pytest.mark.asyncio
+    async def test_directly_assigned_decorated_callback_runs_its_decorator(
+        self, test_config
+    ):
+        """An app's own functools.wraps decorator (here: a permission filter)
+        must not be skipped, or the session could pick a profile the user is
+        not offered."""
+        import functools
+
+        from chainlit.types import ChatProfile
+
+        all_profiles = [
+            ChatProfile(name="locked", markdown_description="", default=True),
+            ChatProfile(name="open", markdown_description=""),
+        ]
+
+        def only_locked(fn):
+            @functools.wraps(fn)
+            async def inner(user, language):
+                return [p for p in await fn(user, language) if p.name == "locked"]
+
+            return inner
+
+        @only_locked
+        async def set_profiles(user, language):
+            return all_profiles
+
+        test_config.code.set_chat_profiles = set_profiles
+        all_profiles[0].config_overrides = _upload_override(False)
+
+        # "open" isn't offered, so the default ("locked") applies
+        cfg = await resolve_session_config(None, "en-US", "open")
+
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("signature", ["positional_only", "varargs"])
+    async def test_directly_assigned_callback_is_called_positionally(
+        self, test_config, signature
+    ):
+        profiles = self._profiles()
+        calls = []
+
+        async def positional_only(user, language, /):
+            calls.append(language)
+            return profiles
+
+        async def varargs(*args):
+            calls.append(args[1])
+            return profiles
+
+        set_profiles = {"positional_only": positional_only, "varargs": varargs}[
+            signature
+        ]
+        test_config.code.set_chat_profiles = set_profiles
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert calls == ["en-US"]
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
     async def test_app_decorators_on_the_callback_still_run(self, test_config):
         """Only `wrap_user_function`'s layer is skipped."""
         import functools
