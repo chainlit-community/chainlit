@@ -839,6 +839,94 @@ def test_upload_file_size_uses_session_config(
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("stored_type", "expected_type", "expected_disposition"),
+    [
+        # rendered inline: no script can run from these
+        ("image/png", "image/png", "inline"),
+        ("IMAGE/JPEG", "image/jpeg", "inline"),
+        ("application/pdf", "application/pdf", "inline"),
+        ("text/plain", "text/plain; charset=utf-8", "inline"),
+        ("audio/mpeg", "audio/mpeg", "inline"),
+        ("video/mp4", "video/mp4", "inline"),
+        # downloads (CVE-2026-110699)
+        ("text/html", "text/html; charset=utf-8", "attachment"),
+        ("Text/HTML; charset=utf-8", "text/html; charset=utf-8", "attachment"),
+        ("application/xhtml+xml", "application/xhtml+xml", "attachment"),
+        ("image/svg+xml", "image/svg+xml", "attachment"),
+        ("text/xml", "text/xml; charset=utf-8", "attachment"),
+        ("application/javascript", "application/javascript", "attachment"),
+        # not a single type/subtype token: browsers may honour the last one
+        ("video/mp4, text/html", "application/octet-stream", "attachment"),
+        ("image/png,text/html", "application/octet-stream", "attachment"),
+        ("", "application/octet-stream", "attachment"),
+    ],
+)
+def test_get_file_serves_only_safe_types_inline(
+    test_client: TestClient,
+    mock_session_get_by_id_patched: Mock,
+    tmp_path: pathlib.Path,
+    mock_get_current_user: Mock,
+    stored_type: str,
+    expected_type: str,
+    expected_disposition: str,
+):
+    mock_get_current_user.return_value = mock_session_get_by_id_patched.user
+    stored = tmp_path / "stored"
+    stored.write_bytes(b"<html><script>alert(1)</script></html>")
+    mock_session_get_by_id_patched.files = {
+        "fid": {
+            "id": "fid",
+            "path": stored,
+            "name": "upload.bin",
+            "type": stored_type,
+            "size": 1,
+        }
+    }
+
+    response = test_client.get(
+        f"/project/file/fid?session_id={mock_session_get_by_id_patched.id}"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == expected_type
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-disposition"] == (
+        f'{expected_disposition}; filename="upload.bin"'
+    )
+
+
+def test_get_file_encodes_unsafe_filename(
+    test_client: TestClient,
+    mock_session_get_by_id_patched: Mock,
+    tmp_path: pathlib.Path,
+    mock_get_current_user: Mock,
+):
+    """The uploader picks the name: it must not break out of the header."""
+    mock_get_current_user.return_value = mock_session_get_by_id_patched.user
+    stored = tmp_path / "stored"
+    stored.write_bytes(b"x")
+    mock_session_get_by_id_patched.files = {
+        "fid": {
+            "id": "fid",
+            "path": stored,
+            "name": 'a"; inline\r\nX-Evil: 1 é.html',
+            "type": "text/html",
+            "size": 1,
+        }
+    }
+
+    response = test_client.get(
+        f"/project/file/fid?session_id={mock_session_get_by_id_patched.id}"
+    )
+
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment; filename*=utf-8''")
+    assert '"' not in disposition
+    assert "\r" not in disposition
+    assert "x-evil" not in response.headers
+
+
 def test_project_translations_file_path_traversal(
     test_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):

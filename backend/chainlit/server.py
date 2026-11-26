@@ -2114,9 +2114,57 @@ async def get_file(
 
     if file_id in session.files:
         file = session.files[file_id]
-        return FileResponse(file["path"], media_type=file["type"])
+        # The MIME type is whatever the uploader claimed. Render inline only
+        # types a browser can't run script from; anything else (HTML, SVG,
+        # XML, ...) is a download, so the app's origin can't be used to host
+        # attacker pages (CVE-2026-110699). In-app rendering is unaffected:
+        # <img>/<audio>/<video> and fetch() ignore Content-Disposition.
+        mime, inline = _served_mime_type(str(file["type"]))
+        return FileResponse(
+            file["path"],
+            media_type=mime,
+            filename=file.get("name") or file_id,
+            content_disposition_type="inline" if inline else "attachment",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
     else:
         raise HTTPException(status_code=404, detail="File not found")
+
+
+# Types served inline by `get_file`: browsers render them without running
+# script. Notably absent: text/html, image/svg+xml, XML and JavaScript.
+_INLINE_SAFE_MIME_TYPES = frozenset(
+    {
+        "application/pdf",
+        "image/apng",
+        "image/avif",
+        "image/bmp",
+        "image/gif",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "text/plain",
+    }
+)
+_INLINE_SAFE_MIME_PREFIXES = ("audio/", "video/")
+# A single RFC 9110 `type/subtype` token. Anything else (a comma-separated
+# list, which browsers may read as its last entry, or stray characters) is
+# served as an opaque download.
+_MIME_ESSENCE_RE = re.compile(
+    r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+)
+
+
+def _served_mime_type(claimed: str) -> tuple[str, bool]:
+    """Return the Content-Type to serve a stored file with, and whether it
+    may be rendered inline."""
+    essence = claimed.split(";", 1)[0].strip().lower()
+    if not _MIME_ESSENCE_RE.match(essence):
+        return "application/octet-stream", False
+    inline = essence in _INLINE_SAFE_MIME_TYPES or essence.startswith(
+        _INLINE_SAFE_MIME_PREFIXES
+    )
+    return essence, inline
 
 
 @router.get("/favicon")

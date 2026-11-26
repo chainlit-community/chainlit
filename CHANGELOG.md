@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- Fix a file upload restriction bypass (CVE-2026-110699, https://cert.pl/en/posts/2026/11/CVE-2026-110699/, reported by Marcin Ochab). A chat profile's `config_overrides` for `features.spontaneous_file_upload` (`enabled`, `accept`, `max_size_mb`) only hid the upload button: the upload endpoint still accepted files under the global settings. They are now enforced on the backend. A client that sends no chat profile, or one that the app does not offer, gets the overrides of the profile the UI would select: the `default` one, else the first.
+- Files uploaded by users or sent as elements are no longer served inline when their type could run script in the browser. They used to be served with whatever `Content-Type` the uploader claimed, so a link to an uploaded HTML or SVG file showed attacker-controlled content, such as a fake login page, on the app's own domain. Images (other than SVG), audio, video, PDF and plain text are still served inline. Everything else is now a download (`Content-Disposition: attachment`), and all files are sent with `X-Content-Type-Options: nosniff`. Elements render in the app as before; only opening such a file's URL directly now downloads it.
+
+### Fixed
+
+- Chat profile `config_overrides` now apply at runtime, not only in the UI. Since they were introduced in 2.7.0, the backend ignored them for file uploads, MCP (`features.mcp`, including `servers` and `user_servers.allowed_urls`) and audio (`features.audio`), and used the global config instead. Apps whose chat profiles override these settings will now see them enforced. This also covers the backend side of https://github.com/Chainlit/chainlit/issues/2908.
+
 ## [3.0.0] - 2026-11-24
 
 ### Added
