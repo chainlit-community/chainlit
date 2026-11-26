@@ -18,7 +18,13 @@ from chainlit.data import get_data_layer
 from chainlit.logger import logger
 from chainlit.message import ErrorMessage, Message
 from chainlit.server import sio
-from chainlit.session import ClientType, WebsocketSession, is_valid_session_id
+from chainlit.session import (
+    ClientType,
+    WebsocketSession,
+    is_valid_session_id,
+    parse_accept_language,
+    resolve_session_config,
+)
 from chainlit.types import (
     InputAudioChunk,
     InputAudioChunkPayload,
@@ -94,7 +100,13 @@ async def resume_thread(session: WebsocketSession):
             metadata = json.loads(metadata)
         user_sessions[session.id] = metadata.copy()
         if chat_profile := metadata.get("chat_profile"):
-            session.chat_profile = chat_profile
+            if chat_profile != session.chat_profile:
+                session.chat_profile = chat_profile
+                # The resumed thread's profile replaces the one the client
+                # connected with, so its config_overrides apply from now on.
+                session.config = await resolve_session_config(
+                    session.user, session.language, chat_profile
+                )
         if chat_settings := metadata.get("chat_settings"):
             session.chat_settings = chat_settings
 
@@ -193,6 +205,20 @@ async def connect(sid: str, environ: WSGIEnvironment, auth: WebSocketSessionAuth
         unquote(url_encoded_chat_profile) if url_encoded_chat_profile else None
     )
 
+    # Resolve the profile's config before the session is registered: from
+    # then on REST calls can find it by id, and must not see it with the
+    # global config instead (CVE-2026-110699).
+    session_config = await resolve_session_config(
+        user, parse_accept_language(environ), chat_profile
+    )
+
+    # A concurrent connect may have registered this session id during the
+    # await above; restore it (with the owner check) rather than replace it.
+    if restore_existing_session(
+        sid, session_id, emit_fn, emit_call_fn, environ, user=user
+    ):
+        return True
+
     WebsocketSession(
         id=session_id,
         socket_id=sid,
@@ -205,6 +231,7 @@ async def connect(sid: str, environ: WSGIEnvironment, auth: WebSocketSessionAuth
         chat_profile=chat_profile,
         thread_id=thread_id,
         environ=environ,
+        config=session_config,
     )
 
     return True

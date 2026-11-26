@@ -15,6 +15,9 @@ from chainlit.session import (
     WebsocketSession,
     clean_metadata,
     is_valid_session_id,
+    parse_accept_language,
+    resolve_session_config,
+    select_chat_profile,
 )
 
 
@@ -824,3 +827,229 @@ class TestMcpSession:
 
         assert stop.is_set()
         assert task.done()
+
+
+def _upload_override(enabled: bool):
+    from chainlit.config import (
+        ChainlitConfigOverrides,
+        FeaturesSettings,
+        SpontaneousFileUploadFeature,
+    )
+
+    return ChainlitConfigOverrides(
+        features=FeaturesSettings(
+            spontaneous_file_upload=SpontaneousFileUploadFeature(enabled=enabled)
+        )
+    )
+
+
+class TestParseAcceptLanguage:
+    @pytest.mark.parametrize(
+        ("environ", "expected"),
+        [
+            ({"HTTP_ACCEPT_LANGUAGE": "fr-FR,fr;q=0.9"}, "fr-FR"),
+            ({}, "en-US"),
+            (None, "en-US"),
+            ({"HTTP_ACCEPT_LANGUAGE": ";;"}, "en-US"),
+        ],
+    )
+    def test_parse_accept_language(self, environ, expected):
+        assert parse_accept_language(environ) == expected
+
+
+class TestSelectChatProfile:
+    """The client names its profile; a missing or unknown name falls back
+    the way the frontend does, so it can't escape config_overrides."""
+
+    def _profiles(self, default_name=None):
+        from chainlit.types import ChatProfile
+
+        return [
+            ChatProfile(name=n, markdown_description=n, default=(n == default_name))
+            for n in ("a", "b", "c")
+        ]
+
+    def test_exact_match(self):
+        assert select_chat_profile(self._profiles("c"), "b").name == "b"
+
+    @pytest.mark.parametrize("name", [None, "unknown", ""])
+    def test_falls_back_to_default_profile(self, name):
+        assert select_chat_profile(self._profiles("c"), name).name == "c"
+
+    def test_falls_back_to_first_profile_without_default(self):
+        assert select_chat_profile(self._profiles(), "unknown").name == "a"
+
+    @pytest.mark.parametrize("profiles", [None, []])
+    def test_no_profiles(self, profiles):
+        assert select_chat_profile(profiles, "a") is None
+
+
+class TestResolveSessionConfig:
+    """resolve_session_config applies the chat profile's config_overrides,
+    as /project/settings does for the UI (CVE-2026-110699)."""
+
+    def _register(self, test_config, profiles_fn):
+        from chainlit.utils import wrap_user_function
+
+        test_config.code.set_chat_profiles = wrap_user_function(profiles_fn)
+
+    def _profiles(self):
+        from chainlit.types import ChatProfile
+
+        return [
+            ChatProfile(
+                name="locked",
+                markdown_description="",
+                default=True,
+                config_overrides=_upload_override(False),
+            ),
+            ChatProfile(name="open", markdown_description=""),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_without_chat_profiles_returns_global_config(self, test_config):
+        test_config.code.set_chat_profiles = None
+        assert await resolve_session_config(None, "en-US", "locked") is test_config
+
+    @pytest.mark.asyncio
+    async def test_applies_selected_profile_overrides(self, test_config):
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+        test_config.features.spontaneous_file_upload.enabled = True
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert cfg is not test_config
+        assert cfg.features.spontaneous_file_upload.enabled is False
+        # the global config is not mutated
+        assert test_config.features.spontaneous_file_upload.enabled is True
+        # callbacks stay shared with the global config
+        assert cfg.code is test_config.code
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", [None, "unknown"])
+    async def test_missing_or_unknown_profile_uses_default(self, test_config, name):
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+
+        cfg = await resolve_session_config(None, "en-US", name)
+
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    async def test_profile_without_overrides_returns_global_config(self, test_config):
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+
+        assert await resolve_session_config(None, "en-US", "open") is test_config
+
+    @pytest.mark.asyncio
+    async def test_passes_user_and_language_like_project_settings(self, test_config):
+        calls = []
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            calls.append((user, language))
+            return profiles
+
+        self._register(test_config, set_profiles)
+        user = Mock(identifier="u")
+
+        test_config.ui.language = None
+        await resolve_session_config(user, "fr-FR", "locked")
+        test_config.ui.language = "de-DE"
+        await resolve_session_config(user, "fr-FR", "locked")
+
+        assert calls == [(user, "fr-FR"), (user, "de-DE")]
+
+    @pytest.mark.asyncio
+    async def test_sync_and_single_argument_callbacks(self, test_config):
+        profiles = self._profiles()
+
+        def set_profiles(user):
+            return profiles
+
+        self._register(test_config, set_profiles)
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert cfg.features.spontaneous_file_upload.enabled is False
+
+    @pytest.mark.asyncio
+    async def test_failing_callback_falls_back_to_global_config(self, test_config):
+        async def set_profiles(user, language):
+            raise RuntimeError("boom")
+
+        self._register(test_config, set_profiles)
+
+        assert await resolve_session_config(None, "en-US", "locked") is test_config
+
+    @pytest.mark.asyncio
+    async def test_invalid_overrides_fall_back_to_global_config(
+        self, test_config, monkeypatch
+    ):
+        profiles = self._profiles()
+
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+        monkeypatch.setattr(
+            type(test_config),
+            "with_overrides",
+            Mock(side_effect=ValueError("bad override")),
+        )
+
+        assert await resolve_session_config(None, "en-US", "locked") is test_config
+
+
+def _unregister(session):
+    from chainlit.session import ws_sessions_id, ws_sessions_sid
+
+    ws_sessions_id.pop(session.id, None)
+    ws_sessions_sid.pop(session.socket_id, None)
+
+
+class TestWebsocketSessionConfig:
+    def test_uses_given_config(self):
+        cfg = Mock()
+        session = WebsocketSession(
+            id="ws_cfg_id",
+            socket_id="socket_cfg",
+            emit=Mock(),
+            emit_call=Mock(),
+            user_env={},
+            client_type="webapp",
+            config=cfg,
+        )
+        try:
+            assert session.config is cfg
+            assert session.get_config() is cfg
+        finally:
+            _unregister(session)
+
+    def test_defaults_to_global_config(self, test_config):
+        session = WebsocketSession(
+            id="ws_cfg_id2",
+            socket_id="socket_cfg2",
+            emit=Mock(),
+            emit_call=Mock(),
+            user_env={},
+            client_type="webapp",
+        )
+        try:
+            assert session.config is test_config
+        finally:
+            _unregister(session)

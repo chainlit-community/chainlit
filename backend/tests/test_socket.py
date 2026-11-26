@@ -266,6 +266,8 @@ class TestResumeThread:
         mock_session = Mock(spec=WebsocketSession)
         mock_session.user = Mock(identifier="user123")
         mock_session.thread_id_to_resume = "thread_123"
+        mock_session.chat_profile = None
+        mock_session.language = "en-US"
         mock_session.id = "session_123"
 
         mock_data_layer = AsyncMock()
@@ -285,6 +287,8 @@ class TestResumeThread:
         mock_session = Mock(spec=WebsocketSession)
         mock_session.user = Mock(identifier="user123")
         mock_session.thread_id_to_resume = "thread_123"
+        mock_session.chat_profile = None
+        mock_session.language = "en-US"
         mock_session.id = "session_123"
 
         thread = {"userIdentifier": "different_user", "metadata": {}}
@@ -306,6 +310,8 @@ class TestResumeThread:
         mock_session = Mock(spec=WebsocketSession)
         mock_session.user = Mock(identifier="user123")
         mock_session.thread_id_to_resume = "thread_123"
+        mock_session.chat_profile = None
+        mock_session.language = "en-US"
         mock_session.id = "session_123"
 
         metadata = {
@@ -340,6 +346,8 @@ class TestResumeThread:
         mock_session = Mock(spec=WebsocketSession)
         mock_session.user = Mock(identifier="user123")
         mock_session.thread_id_to_resume = "thread_123"
+        mock_session.chat_profile = None
+        mock_session.language = "en-US"
         mock_session.id = "session_123"
 
         metadata_dict = {"chat_profile": "gpt-4"}
@@ -535,6 +543,8 @@ class TestSocketEdgeCases:
         mock_session = Mock(spec=WebsocketSession)
         mock_session.user = Mock(identifier="user123")
         mock_session.thread_id_to_resume = "thread_123"
+        mock_session.chat_profile = None
+        mock_session.language = "en-US"
         mock_session.id = "session_123"
 
         thread = {"userIdentifier": "user123", "metadata": {}}
@@ -840,3 +850,114 @@ class TestConnectSessionIdValidation:
         }
 
         assert await connect("sid", {}, auth) is True
+
+
+class TestConnectResolvesSessionConfig:
+    """connect resolves the chat profile's config before registering the
+    session, so REST calls never see it with the global config
+    (CVE-2026-110699)."""
+
+    AUTH = {
+        "sessionId": "5d6c2b0e-3b9a-4e0e-9a43-1f7c8a1f2b44",
+        "clientType": "webapp",
+        "chatProfile": "locked%20profile",
+    }
+
+    def _patch(self, monkeypatch, restore_results):
+        monkeypatch.setattr("chainlit.socket.require_login", lambda: False)
+        restore = Mock(side_effect=restore_results)
+        monkeypatch.setattr("chainlit.socket.restore_existing_session", restore)
+        monkeypatch.setattr("chainlit.socket.load_user_env", lambda _: {})
+        session_config = Mock(name="session_config")
+        resolve = AsyncMock(return_value=session_config)
+        monkeypatch.setattr("chainlit.socket.resolve_session_config", resolve)
+        ws_session = Mock()
+        monkeypatch.setattr("chainlit.socket.WebsocketSession", ws_session)
+        return restore, resolve, ws_session, session_config
+
+    @pytest.mark.asyncio
+    async def test_session_created_with_resolved_config(self, monkeypatch):
+        _, resolve, ws_session, session_config = self._patch(
+            monkeypatch, [False, False]
+        )
+        environ = {"HTTP_ACCEPT_LANGUAGE": "fr-FR,fr;q=0.9"}
+
+        assert await connect("sid", environ, self.AUTH) is True
+
+        resolve.assert_awaited_once_with(None, "fr-FR", "locked profile")
+        ws_session.assert_called_once()
+        assert ws_session.call_args.kwargs["config"] is session_config
+
+    @pytest.mark.asyncio
+    async def test_existing_session_is_restored_without_resolving(self, monkeypatch):
+        _, resolve, ws_session, _ = self._patch(monkeypatch, [True])
+
+        assert await connect("sid", {}, self.AUTH) is True
+
+        resolve.assert_not_awaited()
+        ws_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_registered_during_resolution_is_restored(self, monkeypatch):
+        """A concurrent connect for the same id registered it while this one
+        awaited the config: restore (with the owner check), don't replace."""
+        restore, _, ws_session, _ = self._patch(monkeypatch, [False, True])
+
+        assert await connect("sid", {}, self.AUTH) is True
+
+        assert restore.call_count == 2
+        ws_session.assert_not_called()
+
+
+class TestResumeThreadResolvesSessionConfig:
+    def _session(self, chat_profile):
+        session = Mock(spec=WebsocketSession)
+        session.user = Mock(identifier="user123")
+        session.thread_id_to_resume = "thread_123"
+        session.id = "session_cfg_123"
+        session.chat_profile = chat_profile
+        session.language = "nl-NL"
+        session.config = Mock(name="connect_config")
+        return session
+
+    async def _resume(self, session, monkeypatch, metadata):
+        from chainlit.user_session import user_sessions
+
+        data_layer = AsyncMock()
+        data_layer.get_thread.return_value = {
+            "userIdentifier": "user123",
+            "metadata": metadata,
+        }
+        resolved = Mock(name="resumed_config")
+        resolve = AsyncMock(return_value=resolved)
+        monkeypatch.setattr("chainlit.socket.resolve_session_config", resolve)
+        monkeypatch.setattr("chainlit.socket.get_data_layer", lambda: data_layer)
+        try:
+            await resume_thread(session)
+        finally:
+            user_sessions.pop(session.id, None)
+        return resolve, resolved
+
+    @pytest.mark.asyncio
+    async def test_thread_profile_replaces_connect_profile_config(self, monkeypatch):
+        session = self._session("open")
+
+        resolve, resolved = await self._resume(
+            session, monkeypatch, {"chat_profile": "locked"}
+        )
+
+        resolve.assert_awaited_once_with(session.user, "nl-NL", "locked")
+        assert session.chat_profile == "locked"
+        assert session.config is resolved
+
+    @pytest.mark.asyncio
+    async def test_same_profile_keeps_config(self, monkeypatch):
+        session = self._session("locked")
+        connect_config = session.config
+
+        resolve, _ = await self._resume(
+            session, monkeypatch, {"chat_profile": "locked"}
+        )
+
+        resolve.assert_not_awaited()
+        assert session.config is connect_config
