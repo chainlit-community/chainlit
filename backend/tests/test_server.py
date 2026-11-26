@@ -868,6 +868,9 @@ def test_upload_file_size_uses_session_config(
         ("image/svg+xml", "image/svg+xml", "attachment"),
         ("text/xml", "text/xml; charset=utf-8", "attachment"),
         ("application/javascript", "application/javascript", "attachment"),
+        # XML-based, so possibly scriptable, despite the media prefix
+        ("video/x-evil+xml", "video/x-evil+xml", "attachment"),
+        ("audio/x-evil+xml", "audio/x-evil+xml", "attachment"),
         # not a single type/subtype token: browsers may honour the last one
         ("video/mp4, text/html", "application/octet-stream", "attachment"),
         ("image/png,text/html", "application/octet-stream", "attachment"),
@@ -937,6 +940,107 @@ def test_get_file_encodes_unsafe_filename(
     assert '"' not in disposition
     assert "\r" not in disposition
     assert "x-evil" not in response.headers
+
+
+def _locked_and_open_profiles(test_config: ChainlitConfig):
+    """`locked` (default) disables uploads, `open` keeps the global config."""
+    from chainlit.config import ChainlitConfigOverrides, FeaturesSettings
+    from chainlit.types import ChatProfile
+
+    profiles = [
+        ChatProfile(
+            name="locked",
+            markdown_description="",
+            default=True,
+            config_overrides=ChainlitConfigOverrides(
+                features=FeaturesSettings(
+                    spontaneous_file_upload=SpontaneousFileUploadFeature(enabled=False)
+                )
+            ),
+        ),
+        ChatProfile(name="open", markdown_description=""),
+    ]
+
+    async def set_chat_profiles(user, language):
+        return profiles
+
+    test_config.code.set_chat_profiles = set_chat_profiles
+    test_config.features.spontaneous_file_upload = SpontaneousFileUploadFeature(
+        enabled=True, accept=["*/*"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_enabled"),
+    [
+        ({}, False),  # no profile: the default one, like the session gets
+        ({"chat_profile": "unknown"}, False),
+        ({"chat_profile": "locked"}, False),
+        ({"chat_profile": "open"}, True),
+    ],
+)
+def test_project_settings_selects_profile_like_the_session(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    params: dict,
+    expected_enabled: bool,
+):
+    """The UI is shown the config the backend enforces for the session."""
+    _locked_and_open_profiles(test_config)
+
+    response = test_client.get("/project/settings", params=params)
+
+    assert response.status_code == 200
+    features = response.json()["features"]
+    assert features["spontaneous_file_upload"]["enabled"] is expected_enabled
+
+
+@pytest.mark.parametrize(
+    ("chat_profile", "expected_status"),
+    [("locked", 400), (None, 400), ("unknown", 400), ("open", 200)],
+)
+def test_upload_through_real_socket_session(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    mock_get_current_user: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    chat_profile,
+    expected_status: int,
+):
+    """End to end: the socket connect handler creates the session, then the
+    REST upload is validated against that session's profile config
+    (CVE-2026-110699)."""
+    import asyncio
+    import uuid
+
+    from chainlit.session import WebsocketSession, ws_sessions_id, ws_sessions_sid
+    from chainlit.socket import connect
+
+    _locked_and_open_profiles(test_config)
+    mock_get_current_user.return_value = None
+    monkeypatch.setattr("chainlit.socket.require_login", lambda: False)
+    monkeypatch.setattr("chainlit.config.FILES_DIRECTORY", tmp_path)
+    session_id = str(uuid.uuid4())
+    auth = {
+        "sessionId": session_id,
+        "clientType": "webapp",
+        "chatProfile": chat_profile,
+    }
+
+    assert asyncio.run(connect("sid-" + session_id, {}, auth)) is True
+    session = WebsocketSession.get_by_id(session_id)
+    try:
+        assert session is not None
+        response = test_client.post(
+            "/project/file",
+            files={"file": ("login.html", b"<form>", "text/html")},
+            params={"session_id": session_id},
+        )
+        assert response.status_code == expected_status
+    finally:
+        ws_sessions_id.pop(session_id, None)
+        ws_sessions_sid.pop("sid-" + session_id, None)
 
 
 def test_project_translations_file_path_traversal(

@@ -867,13 +867,15 @@ async def project_settings(
         await data_layer.build_debug_url() if data_layer and config.run.debug else None
     )
 
+    from chainlit.session import select_chat_profile
+
+    # Pick the profile exactly as `resolve_session_config` does for the
+    # session, so a client that names no (or an unknown) profile is shown
+    # the config the backend will enforce for it.
     cfg = config
-    if chat_profile and chat_profiles:
-        current_profile = next(
-            (p for p in chat_profiles if p.name == chat_profile), None
-        )
-        if current_profile and getattr(current_profile, "config_overrides", None):
-            cfg = config.with_overrides(current_profile.config_overrides)
+    current_profile = select_chat_profile(chat_profiles, chat_profile)
+    if current_profile and getattr(current_profile, "config_overrides", None):
+        cfg = config.with_overrides(current_profile.config_overrides)
 
     features_dict = cfg.features.model_dump()
     # Strip sensitive details from MCP server configs — only expose name and type to clients
@@ -2167,8 +2169,8 @@ def _served_mime_type(claimed: str) -> tuple[str, bool]:
     essence = essence.strip().lower()
     if not _MIME_ESSENCE_RE.match(essence):
         return "application/octet-stream", False
-    inline = essence in _INLINE_SAFE_MIME_TYPES or essence.startswith(
-        _INLINE_SAFE_MIME_PREFIXES
+    inline = essence in _INLINE_SAFE_MIME_TYPES or (
+        essence.startswith(_INLINE_SAFE_MIME_PREFIXES) and not essence.endswith("+xml")
     )
     # Keep a well-formed charset, so non-UTF-8 text isn't served as UTF-8
     # (Starlette adds `charset=utf-8` to text/* types that have none).
