@@ -4,7 +4,7 @@ from collections import deque
 from typing import TYPE_CHECKING, Literal, Optional, Union
 
 from chainlit.context import context
-from chainlit.file_serving import storage_object_headers
+from chainlit.file_serving import mime_essence, storage_object_headers
 from chainlit.logger import logger
 from chainlit.session import WebsocketSession
 
@@ -42,7 +42,12 @@ def _accepts_content_disposition(upload_file) -> bool:
     except (TypeError, ValueError):
         return True
     return any(
-        p.name == "content_disposition" or p.kind is inspect.Parameter.VAR_KEYWORD
+        p.kind is inspect.Parameter.VAR_KEYWORD
+        or (
+            p.name == "content_disposition"
+            and p.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        )
         for p in params
     )
 
@@ -71,16 +76,18 @@ async def upload_element_file(
             content_disposition=disposition,
         )
     # A storage client written before `content_disposition` existed can't
-    # make this a download: store it with a type no browser renders.
-    logger.warning(
-        "%s.upload_file takes no content_disposition; storing %r as "
-        "application/octet-stream",
-        type(storage).__name__,
-        filename,
-    )
+    # make this a download. Active documents already have an opaque type;
+    # SVG is the other type that runs script when opened, so it gets one
+    # too. Other types keep theirs: the frontend parses application/json
+    # responses (Plotly and dataframe elements).
+    if mime_essence(stored_mime) == "image/svg+xml":
+        logger.warning(
+            "%s.upload_file takes no content_disposition; storing %r as "
+            "application/octet-stream",
+            type(storage).__name__,
+            filename,
+        )
+        stored_mime = "application/octet-stream"
     return await storage.upload_file(
-        object_key=object_key,
-        data=data,
-        mime="application/octet-stream",
-        overwrite=True,
+        object_key=object_key, data=data, mime=stored_mime, overwrite=True
     )

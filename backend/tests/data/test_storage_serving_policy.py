@@ -116,6 +116,8 @@ class LegacyStorageClient:
         # can't be made a download: stored with a type no browser renders
         ("image/svg+xml", "application/octet-stream"),
         ("text/html", "application/octet-stream"),
+        # keeps its type: the frontend parses JSON responses (Plotly)
+        ("application/json", "application/json"),
     ],
 )
 async def test_legacy_storage_client_still_works(
@@ -175,3 +177,48 @@ async def test_object_metadata_in_s3(
 
     assert head["ContentType"] == content_type
     assert head.get("ContentDisposition") == disposition
+
+
+class PositionalOnlyDispositionClient:
+    """Takes a parameter called content_disposition, but not by keyword."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def upload_file(
+        self, content_disposition=None, /, *, object_key, data, mime, overwrite
+    ):
+        self.calls.append(mime)
+        return {"url": "https://example.com/x", "object_key": object_key}
+
+
+class KwargsClient:
+    def __init__(self):
+        self.calls = []
+
+    async def upload_file(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"url": "https://example.com/x", "object_key": kwargs["object_key"]}
+
+
+@pytest.mark.asyncio
+async def test_positional_only_parameter_is_not_keyword_support():
+    from chainlit.data.utils import upload_element_file
+
+    storage = PositionalOnlyDispositionClient()
+
+    await upload_element_file(storage, "k", b"x", "image/svg+xml", "e.svg")
+
+    assert storage.calls == ["application/octet-stream"]
+
+
+@pytest.mark.asyncio
+async def test_kwargs_client_gets_the_disposition():
+    from chainlit.data.utils import upload_element_file
+
+    storage = KwargsClient()
+
+    await upload_element_file(storage, "k", b"x", "image/svg+xml", "e.svg")
+
+    assert storage.calls[0]["mime"] == "image/svg+xml"
+    assert storage.calls[0]["content_disposition"] == 'attachment; filename="e.svg"'
