@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import mimetypes
 import re
@@ -327,6 +328,22 @@ def select_chat_profile(
     return next((p for p in profiles if p.default), profiles[0])
 
 
+async def _call_set_chat_profiles(callback: Callable, user, language: str):
+    """Call the app's `set_chat_profiles` callback, letting exceptions through.
+
+    `@cl.set_chat_profiles` registers it through `wrap_user_function`, which
+    logs exceptions and returns None: indistinguishable from an app that
+    offers no profiles. So call the function it wraps (one level only, so an
+    app's own decorators still run), with the same by-name argument mapping.
+    """
+    func = getattr(callback, "__wrapped__", callback)
+    params = list(inspect.signature(func).parameters)
+    result = func(**dict(zip(params, (user, language))))
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
 async def resolve_session_config(
     user: Optional[Union["User", "PersistedUser"]],
     language: str,
@@ -340,11 +357,11 @@ async def resolve_session_config(
     the global `config.code`, so callbacks registered or reloaded later are
     always the current ones.
 
-    If `set_chat_profiles` raises, `wrap_user_function` logs it and returns
-    None, and `/project/settings` then offers no profiles and the global
-    features; this returns the global config too, so backend and UI agree.
-    Overrides that don't validate raise, as they do in `/project/settings`:
-    the session must not silently run without them.
+    Fails closed: if `set_chat_profiles` raises, or the overrides don't
+    validate, this raises instead of returning the global config, so the
+    session can't run without its profile's restrictions. Clients can
+    influence the callback's input (the language comes from the
+    Accept-Language header), so a failure is not just a transient error.
     """
     from chainlit.config import config as global_config
 
@@ -352,8 +369,10 @@ async def resolve_session_config(
         return global_config
 
     # Same arguments as `/project/settings`, so both see the same profiles.
-    profiles = await global_config.code.set_chat_profiles(
-        user, global_config.ui.language or language
+    profiles = await _call_set_chat_profiles(
+        global_config.code.set_chat_profiles,
+        user,
+        global_config.ui.language or language,
     )
     profile = select_chat_profile(profiles, chat_profile)
     overrides = getattr(profile, "config_overrides", None) if profile else None

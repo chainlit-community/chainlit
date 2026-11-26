@@ -2013,13 +2013,11 @@ def validate_file_upload(
         ValueError: If the file is not allowed.
     """
     feature = (cfg or config).features.spontaneous_file_upload
-    if not spec:
-        if feature is None:
-            """Default for a missing config is to allow the fileupload without any restrictions"""
-            return
-
-        if not feature.enabled:
-            raise ValueError("File upload is not enabled")
+    # Without the section the UI offers no uploads, so neither does the
+    # backend (CVE-2026-110699). Uploads requested by an AskFileMessage
+    # (`spec`) are validated against that message's own spec.
+    if not spec and (feature is None or not feature.enabled):
+        raise ValueError("File upload is not enabled")
 
     validate_file_mime_type(file, spec, cfg)
     validate_file_size(file, spec, cfg)

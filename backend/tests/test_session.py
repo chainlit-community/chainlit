@@ -988,13 +988,57 @@ class TestResolveSessionConfig:
         assert cfg.features.spontaneous_file_upload.enabled is False
 
     @pytest.mark.asyncio
-    async def test_failing_callback_falls_back_to_global_config(self, test_config):
+    @pytest.mark.parametrize("registered_raw", [False, True])
+    async def test_failing_callback_raises(self, test_config, registered_raw):
+        """Fail closed: a client can make the callback raise (e.g. through
+        the language), which must not drop the profile's restrictions."""
+
         async def set_profiles(user, language):
             raise RuntimeError("boom")
+
+        if registered_raw:
+            test_config.code.set_chat_profiles = set_profiles
+        else:
+            self._register(test_config, set_profiles)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await resolve_session_config(None, "zz", "locked")
+
+    @pytest.mark.asyncio
+    async def test_callback_returning_no_profiles_uses_global_config(self, test_config):
+        async def set_profiles(user, language):
+            return None
 
         self._register(test_config, set_profiles)
 
         assert await resolve_session_config(None, "en-US", "locked") is test_config
+
+    @pytest.mark.asyncio
+    async def test_app_decorators_on_the_callback_still_run(self, test_config):
+        """Only `wrap_user_function`'s layer is skipped."""
+        import functools
+
+        calls = []
+        profiles = self._profiles()
+
+        def app_decorator(fn):
+            @functools.wraps(fn)
+            async def inner(user, language):
+                calls.append(language)
+                return await fn(user, language)
+
+            return inner
+
+        @app_decorator
+        async def set_profiles(user, language):
+            return profiles
+
+        self._register(test_config, set_profiles)
+
+        cfg = await resolve_session_config(None, "en-US", "locked")
+
+        assert calls == ["en-US"]
+        assert cfg.features.spontaneous_file_upload.enabled is False
 
     @pytest.mark.asyncio
     async def test_invalid_overrides_raise(self, test_config, monkeypatch):

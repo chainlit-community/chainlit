@@ -1043,6 +1043,79 @@ def test_upload_through_real_socket_session(
         ws_sessions_sid.pop("sid-" + session_id, None)
 
 
+@pytest.mark.parametrize(
+    ("ask_parent_id", "expected_status"),
+    [
+        (None, 400),  # spontaneous: rejected, as the UI offers no upload
+        ("mocked_parent_id", 200),  # AskFileMessage: its own spec applies
+    ],
+)
+def test_upload_without_spontaneous_upload_section(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    mock_session_get_by_id_patched: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    ask_parent_id,
+    expected_status: int,
+):
+    """No [features.spontaneous_file_upload] section: the web UI and copilot
+    hide uploads, so the backend refuses them too (CVE-2026-110699)."""
+    monkeypatch.setattr(test_config.features, "spontaneous_file_upload", None)
+    mock_session_get_by_id_patched.files_spec = {
+        "mocked_parent_id": AskFileSpec(
+            step_id="s",
+            timeout=1,
+            type="file",
+            accept=["text/plain"],
+            max_files=1,
+            max_size_mb=1,
+        )
+    }
+    mock_session_get_by_id_patched.persist_file = AsyncMock(
+        return_value={"id": "id", "name": "f.txt", "type": "text/plain", "size": 1}
+    )
+    params = {"session_id": mock_session_get_by_id_patched.id}
+    if ask_parent_id:
+        params["ask_parent_id"] = ask_parent_id
+
+    response = test_client.post(
+        "/project/file", files={"file": ("f.txt", b"x", "text/plain")}, params=params
+    )
+
+    assert response.status_code == expected_status
+
+
+def test_connect_refused_when_chat_profiles_callback_raises(
+    test_config: ChainlitConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A client can make a callback raise through its Accept-Language; the
+    session must not then fall back to the global config and escape the
+    profile's upload restriction."""
+    import asyncio
+    import uuid
+
+    from chainlit.callbacks import set_chat_profiles
+    from chainlit.session import WebsocketSession
+    from chainlit.socket import connect
+
+    _locked_and_open_profiles(test_config)
+    profiles_by_language = {"en-US": test_config.code.set_chat_profiles}
+
+    @set_chat_profiles
+    async def profiles(user, language):
+        return await profiles_by_language[language](user, language)
+
+    monkeypatch.setattr("chainlit.socket.require_login", lambda: False)
+    session_id = str(uuid.uuid4())
+    auth = {"sessionId": session_id, "clientType": "webapp", "chatProfile": "locked"}
+
+    with pytest.raises(ConnectionRefusedError, match="chat profile"):
+        asyncio.run(connect("sid", {"HTTP_ACCEPT_LANGUAGE": "zz"}, auth))
+
+    assert WebsocketSession.get_by_id(session_id) is None
+
+
 def test_project_translations_file_path_traversal(
     test_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):

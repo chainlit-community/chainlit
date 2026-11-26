@@ -216,7 +216,9 @@ async def connect(sid: str, environ: WSGIEnvironment, auth: WebSocketSessionAuth
             user, parse_accept_language(environ), chat_profile
         )
     except Exception:
-        logger.exception("Could not apply the chat profile's config_overrides.")
+        # set_chat_profiles raised, or the profile's config_overrides are
+        # invalid: refuse rather than run without the profile's restrictions.
+        logger.exception("Could not resolve the chat profile's config.")
         raise ConnectionRefusedError("invalid chat profile configuration")
 
     # A concurrent connect may have registered this session id during the
