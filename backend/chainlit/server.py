@@ -1980,7 +1980,9 @@ async def upload_file(
             )
 
         try:
-            validate_file_upload(file, spec=spec)
+            # The session's config carries its chat profile's overrides,
+            # which the UI already applies (CVE-2026-110699).
+            validate_file_upload(file, spec=spec, cfg=session.get_config())
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -1993,43 +1995,54 @@ async def upload_file(
         await file.close()
 
 
-def validate_file_upload(file: UploadFile, spec: Optional[AskFileSpec] = None):
+def validate_file_upload(
+    file: UploadFile,
+    spec: Optional[AskFileSpec] = None,
+    cfg: Optional[ChainlitConfig] = None,
+):
     """Validate the file upload as configured in config.features.spontaneous_file_upload or by AskFileSpec
     for a specific message.
 
     Args:
         file (UploadFile): The file to validate.
         spec (AskFileSpec): The file spec to validate against if any.
+        cfg (ChainlitConfig): The session's config; defaults to the global config.
     Raises:
         ValueError: If the file is not allowed.
     """
-    if not spec and config.features.spontaneous_file_upload is None:
-        """Default for a missing config is to allow the fileupload without any restrictions"""
-        return
+    feature = (cfg or config).features.spontaneous_file_upload
+    if not spec:
+        if feature is None:
+            """Default for a missing config is to allow the fileupload without any restrictions"""
+            return
 
-    if not spec and not config.features.spontaneous_file_upload.enabled:
-        raise ValueError("File upload is not enabled")
+        if not feature.enabled:
+            raise ValueError("File upload is not enabled")
 
-    validate_file_mime_type(file, spec)
-    validate_file_size(file, spec)
+    validate_file_mime_type(file, spec, cfg)
+    validate_file_size(file, spec, cfg)
 
 
-def validate_file_mime_type(file: UploadFile, spec: Optional[AskFileSpec]):
+def validate_file_mime_type(
+    file: UploadFile,
+    spec: Optional[AskFileSpec],
+    cfg: Optional[ChainlitConfig] = None,
+):
     """Validate the file mime type as configured in config.features.spontaneous_file_upload.
     Args:
         file (UploadFile): The file to validate.
+        cfg (ChainlitConfig): The session's config; defaults to the global config.
     Raises:
         ValueError: If the file type is not allowed.
     """
-
-    if not spec and (
-        config.features.spontaneous_file_upload is None
-        or config.features.spontaneous_file_upload.accept is None
-    ):
+    feature = (cfg or config).features.spontaneous_file_upload
+    if spec:
+        accept = spec.accept
+    elif feature is None or feature.accept is None:
         "Accept is not configured, allowing all file types"
         return
-
-    accept = config.features.spontaneous_file_upload.accept if not spec else spec.accept
+    else:
+        accept = feature.accept
 
     assert isinstance(accept, List) or isinstance(accept, dict), (
         "Invalid configuration for spontaneous_file_upload, accept must be a list or a dict"
@@ -2052,24 +2065,25 @@ def validate_file_mime_type(file: UploadFile, spec: Optional[AskFileSpec]):
     raise ValueError("File type not allowed")
 
 
-def validate_file_size(file: UploadFile, spec: Optional[AskFileSpec]):
+def validate_file_size(
+    file: UploadFile,
+    spec: Optional[AskFileSpec],
+    cfg: Optional[ChainlitConfig] = None,
+):
     """Validate the file size as configured in config.features.spontaneous_file_upload.
     Args:
         file (UploadFile): The file to validate.
+        cfg (ChainlitConfig): The session's config; defaults to the global config.
     Raises:
         ValueError: If the file size is too large.
     """
-    if not spec and (
-        config.features.spontaneous_file_upload is None
-        or config.features.spontaneous_file_upload.max_size_mb is None
-    ):
+    feature = (cfg or config).features.spontaneous_file_upload
+    if spec:
+        max_size_mb = spec.max_size_mb
+    elif feature is None or feature.max_size_mb is None:
         return
-
-    max_size_mb = (
-        config.features.spontaneous_file_upload.max_size_mb
-        if not spec
-        else spec.max_size_mb
-    )
+    else:
+        max_size_mb = feature.max_size_mb
     if file.size is not None and file.size > max_size_mb * 1024 * 1024:
         raise ValueError("File size too large")
 

@@ -748,6 +748,97 @@ def test_ask_file_with_spontaneous_upload_disabled(
     assert response.status_code == expected_status
 
 
+def _with_upload_feature(cfg: ChainlitConfig, **kwargs) -> ChainlitConfig:
+    """A copy of cfg as a chat profile's config_overrides would produce."""
+    from chainlit.config import ChainlitConfigOverrides, FeaturesSettings
+
+    return cfg.with_overrides(
+        ChainlitConfigOverrides(
+            features=FeaturesSettings(
+                spontaneous_file_upload=SpontaneousFileUploadFeature(**kwargs)
+            )
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("global_feature", "session_feature", "mime_type", "expected_status"),
+    [
+        # CVE-2026-110699: the profile disables uploads, the UI hides them
+        (dict(enabled=True), dict(enabled=False), "text/plain", 400),
+        # the profile enables what the global config disables
+        (dict(enabled=False), dict(enabled=True), "text/plain", 200),
+        # the profile's accept list applies
+        (
+            dict(enabled=True, accept=["*/*"]),
+            dict(enabled=True, accept=["image/*"]),
+            "text/html",
+            400,
+        ),
+        (
+            dict(enabled=True, accept=["*/*"]),
+            dict(enabled=True, accept=["image/*"]),
+            "image/png",
+            200,
+        ),
+    ],
+)
+def test_upload_file_uses_session_config(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    mock_session_get_by_id_patched: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    global_feature: dict,
+    session_feature: dict,
+    mime_type: str,
+    expected_status: int,
+):
+    """Uploads are validated against the session's config (with its chat
+    profile's overrides), not the global config."""
+    monkeypatch.setattr(
+        test_config.features,
+        "spontaneous_file_upload",
+        SpontaneousFileUploadFeature(**global_feature),
+    )
+    session_config = _with_upload_feature(test_config, **session_feature)
+    mock_session_get_by_id_patched.get_config = Mock(return_value=session_config)
+    mock_session_get_by_id_patched.persist_file = AsyncMock(
+        return_value={"id": "id", "name": "f", "type": mime_type, "size": 1}
+    )
+
+    response = test_client.post(
+        "/project/file",
+        files={"file": ("f", b"x", mime_type)},
+        params={"session_id": mock_session_get_by_id_patched.id},
+    )
+
+    assert response.status_code == expected_status
+
+
+def test_upload_file_size_uses_session_config(
+    test_client: TestClient,
+    test_config: ChainlitConfig,
+    mock_session_get_by_id_patched: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        test_config.features,
+        "spontaneous_file_upload",
+        SpontaneousFileUploadFeature(enabled=True, max_size_mb=500),
+    )
+    mock_session_get_by_id_patched.get_config = Mock(
+        return_value=_with_upload_feature(test_config, enabled=True, max_size_mb=1)
+    )
+
+    response = test_client.post(
+        "/project/file",
+        files={"file": ("f.txt", b"1" * (1024 * 1024 + 1), "text/plain")},
+        params={"session_id": mock_session_get_by_id_patched.id},
+    )
+
+    assert response.status_code == 400
+
+
 def test_project_translations_file_path_traversal(
     test_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):

@@ -1,4 +1,5 @@
 import datetime
+import importlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable
@@ -41,6 +42,11 @@ def mock_session_factory(persisted_test_user: PersistedUser) -> Callable[..., Mo
         mock.has_first_interaction = kwargs.get("has_first_interaction", True)
         mock.files = kwargs.get("files", {})
         mock.files_spec = kwargs.get("files_spec", {})
+        # Like a session without chat profile overrides: the global config,
+        # looked up per call so the `test_config` fixture's patch applies.
+        mock.get_config = Mock(
+            side_effect=lambda: importlib.import_module("chainlit.config").config
+        )
 
         return mock
 
