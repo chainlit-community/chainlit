@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - A file upload is turned into an image, audio or video element only when its MIME type is `image/...`, `audio/...` or `video/...`. It used to be enough for the type to contain "image", "audio" or "video" anywhere, so `text/html; x=image` became an image element. Other types become file elements.
 
+- **Breaking:** the SQLAlchemy and DynamoDB data layers now pass `content_disposition` to the storage client's `upload_file` for every file type outside the inline list (so most documents, archives, JSON and CSV), not only from the Chainlit data layer. A custom storage client whose `upload_file` has no such parameter is detected and still works. But if that method sits behind a wrapper that hides its signature (`*args, **kwargs` without `functools.wraps`), those uploads now fail with a `TypeError`, and the element is not persisted. Add `content_disposition: str | None = None` to the client's `upload_file`, as `BaseStorageClient` declares since 2.7.0, or keep the signature visible with `functools.wraps`.
+
 ### Fixed
 
 - `GCSStorageClient` now stores the `content_disposition` it is given (https://github.com/chainlit-community/chainlit/issues/30). It used to ignore it, so files on Google Cloud Storage never got a `Content-Disposition`.
