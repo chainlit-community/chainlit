@@ -60,7 +60,10 @@ _ACTIVE_DOCUMENT_TYPES = frozenset(
 def is_active_document(mime: Optional[str]) -> bool:
     essence = mime_essence(mime)
     return essence != "image/svg+xml" and (
-        essence in _ACTIVE_DOCUMENT_TYPES or essence.endswith(("+xml", "/xml"))
+        essence in _ACTIVE_DOCUMENT_TYPES
+        or essence.endswith(("+xml", "/xml"))
+        # multipart/x-mixed-replace renders its HTML parts in WebKit
+        or essence.startswith("multipart/")
     )
 
 
@@ -94,8 +97,14 @@ def content_disposition(
     percent-encoded (RFC 6266 / RFC 8187), so it can't break the header."""
     if not filename:
         return disposition_type
-    # Bound the header's length; percent-encoding can triple it.
-    filename = filename[:_MAX_FILENAME_CHARS]
+    # Bound the header's length (percent-encoding can triple it), keeping
+    # a short extension.
+    if len(filename) > _MAX_FILENAME_CHARS:
+        stem, dot, ext = filename.rpartition(".")
+        if dot and stem and len(ext) <= 16:
+            filename = stem[: _MAX_FILENAME_CHARS - len(ext) - 1] + "." + ext
+        else:
+            filename = filename[:_MAX_FILENAME_CHARS]
     # safe="": RFC 8187 allows no literal "/" in an extended value.
     # errors="replace": a lone surrogate must not make the upload fail.
     quoted = quote(filename, safe="", errors="replace")

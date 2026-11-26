@@ -222,3 +222,39 @@ async def test_kwargs_client_gets_the_disposition():
 
     assert storage.calls[0]["mime"] == "image/svg+xml"
     assert storage.calls[0]["content_disposition"] == 'attachment; filename="e.svg"'
+
+
+def _legacy_behind_wrapper():
+    """A pre-2.7.0 client whose upload_file is wrapped without
+    functools.wraps, so its signature reads as (*args, **kwargs)."""
+    legacy = LegacyStorageClient()
+    inner = legacy.upload_file
+
+    async def wrapper(*args, **kwargs):
+        return await inner(*args, **kwargs)
+
+    legacy.upload_file = wrapper  # type: ignore[method-assign]
+    return legacy
+
+
+@pytest.mark.asyncio
+async def test_wrapped_legacy_client_falls_back():
+    from chainlit.data.utils import upload_element_file
+
+    storage = _legacy_behind_wrapper()
+
+    await upload_element_file(storage, "k", b"x", "image/svg+xml", "e.svg")
+
+    assert storage.calls == [{"object_key": "k", "mime": "application/octet-stream"}]
+
+
+@pytest.mark.asyncio
+async def test_unrelated_type_error_is_not_swallowed():
+    from chainlit.data.utils import upload_element_file
+
+    class Broken:
+        async def upload_file(self, **kwargs):
+            raise TypeError("something else")
+
+    with pytest.raises(TypeError, match="something else"):
+        await upload_element_file(Broken(), "k", b"x", "image/svg+xml", "e.svg")

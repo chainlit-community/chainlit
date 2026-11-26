@@ -75,6 +75,11 @@ def test_content_disposition_encodes_the_filename(filename, expected):
             ("application/octet-stream", 'attachment; filename="f"'),
         ),
         ("text/xml", None, ("application/octet-stream", 'attachment; filename="f"')),
+        (
+            "multipart/x-mixed-replace",
+            None,
+            ("application/octet-stream", 'attachment; filename="f"'),
+        ),
         # not an active document: keeps its type, but is a download
         ("application/json", None, ("application/json", 'attachment; filename="f"')),
         (
@@ -98,3 +103,9 @@ def test_content_disposition_bounds_the_filename():
     value = content_disposition("attachment", "é" * 1000)
     assert value.startswith("attachment; filename*=utf-8''")
     assert value.count("%C3%A9") == 200
+
+
+def test_content_disposition_keeps_the_extension_when_truncating():
+    value = content_disposition("attachment", "a" * 199 + "é.html")
+    assert value.rstrip('"').endswith(".html")
+    assert len(value) < 700
